@@ -15,7 +15,7 @@ import re
 
 import numpy as np
 import pandas as pd
-from pandas.api.types import is_categorical_dtype, is_object_dtype
+from pandas.api.types import CategoricalDtype, is_object_dtype
 
 _ILLEGAL_CHARACTER_PAT = re.compile(r"[^-_=\w\d\(\)<>\.]")
 
@@ -39,7 +39,7 @@ def writearff(data, filename, relation_name=None, index=True):
         Write row names (index)
     """
     if isinstance(filename, str):
-        fp = open(filename, 'w')
+        fp = open(filename, "w")
 
         if relation_name is None:
             relation_name = os.path.basename(filename)
@@ -59,18 +59,18 @@ def writearff(data, filename, relation_name=None, index=True):
 
 def _write_header(data, fp, relation_name, index):
     """Write header containing attribute names and types"""
-    fp.write("@relation {0}\n\n".format(relation_name))
+    fp.write(f"@relation {relation_name}\n\n")
 
     if index:
         data = data.reset_index()
 
     attribute_names = _sanitize_column_names(data)
 
-    for column, series in data.iteritems():
+    for column, series in data.items():
         name = attribute_names[column]
-        fp.write("@attribute {0}\t".format(name))
+        fp.write(f"@attribute {name}\t")
 
-        if is_categorical_dtype(series) or is_object_dtype(series):
+        if isinstance(series.dtype, CategoricalDtype) or is_object_dtype(series):
             _write_attribute_categorical(series, fp)
         elif np.issubdtype(series.dtype, np.floating):
             fp.write("real")
@@ -79,7 +79,7 @@ def _write_header(data, fp, relation_name, index):
         elif np.issubdtype(series.dtype, np.datetime64):
             fp.write("date 'yyyy-MM-dd HH:mm:ss'")
         else:
-            raise TypeError('unsupported type %s' % series.dtype)
+            raise TypeError(f"unsupported type {series.dtype}")
 
         fp.write("\n")
     return data
@@ -104,8 +104,8 @@ def _check_str_value(x):
             if x[0] in ('"', "'"):
                 x = x[1:]
             if x[-1] in ('"', "'"):
-                x = x[:len(x) - 1]
-            x = '"' + x.replace('"', "\\\"") + '"'
+                x = x[: len(x) - 1]
+            x = '"' + x.replace('"', '\\"') + '"'
     return str(x)
 
 
@@ -114,7 +114,7 @@ _check_str_array = np.frompyfunc(_check_str_value, 1, 1)
 
 def _write_attribute_categorical(series, fp):
     """Write categories of a categorical/nominal attribute"""
-    if is_categorical_dtype(series.dtype):
+    if isinstance(series.dtype, CategoricalDtype):
         categories = series.cat.categories
         string_values = _check_str_array(categories)
     else:
@@ -133,7 +133,7 @@ def _write_data(data, fp):
 
     def to_str(x):
         if pd.isnull(x):
-            return '?'
+            return "?"
         return str(x)
 
     data = data.applymap(to_str)

@@ -1,6 +1,5 @@
 from math import ceil
-import numbers
-import warnings
+from numbers import Integral, Real
 
 import numpy as np
 from scipy.sparse import issparse
@@ -9,12 +8,19 @@ from sklearn.tree import _tree
 from sklearn.tree._classes import DENSE_SPLITTERS, SPARSE_SPLITTERS
 from sklearn.tree._splitter import Splitter
 from sklearn.tree._tree import BestFirstTreeBuilder, DepthFirstTreeBuilder, Tree
-from sklearn.utils.validation import check_is_fitted, check_random_state
+from sklearn.tree._utils import _any_isnan_axis0
+from sklearn.utils._param_validation import Interval, StrOptions
+from sklearn.utils.validation import (
+    _assert_all_finite_element_wise,
+    assert_all_finite,
+    check_is_fitted,
+    check_random_state,
+)
 
 from ..base import SurvivalAnalysisMixin
 from ..functions import StepFunction
 from ..util import check_array_survival
-from ._criterion import LogrankCriterion
+from ._criterion import LogrankCriterion, get_unique_times
 
 __all__ = ["SurvivalTree"]
 
@@ -25,8 +31,7 @@ def _array_to_step_function(x, array):
     n_samples = array.shape[0]
     funcs = np.empty(n_samples, dtype=np.object_)
     for i in range(n_samples):
-        funcs[i] = StepFunction(x=x,
-                                y=array[i])
+        funcs[i] = StepFunction(x=x, y=array[i])
     return funcs
 
 
@@ -36,19 +41,22 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
     The quality of a split is measured by the
     log-rank splitting rule.
 
+    If ``splitter='best'``, fit and predict methods support
+    missing values. See :ref:`tree_missing_value_support` for details.
+
     See [1]_, [2]_ and [3]_ for further description.
 
     Parameters
     ----------
-    splitter : string, optional, default: "best"
+    splitter : {'best', 'random'}, default: 'best'
         The strategy used to choose the split at each node. Supported
-        strategies are "best" to choose the best split and "random" to choose
+        strategies are 'best' to choose the best split and 'random' to choose
         the best random split.
 
     max_depth : int or None, optional, default: None
         The maximum depth of the tree. If None, then nodes are expanded until
         all leaves are pure or until all leaves contain less than
-        min_samples_split samples.
+        `min_samples_split` samples.
 
     min_samples_split : int, float, optional, default: 6
         The minimum number of samples required to split an internal node:
@@ -78,34 +86,42 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
     max_features : int, float, string or None, optional, default: None
         The number of features to consider when looking for the best split:
 
-            - If int, then consider `max_features` features at each split.
-            - If float, then `max_features` is a fraction and
-              `int(max_features * n_features)` features are considered at each
-              split.
-            - If "auto", then `max_features=sqrt(n_features)`.
-            - If "sqrt", then `max_features=sqrt(n_features)`.
-            - If "log2", then `max_features=log2(n_features)`.
-            - If None, then `max_features=n_features`.
+        - If int, then consider `max_features` features at each split.
+        - If float, then `max_features` is a fraction and
+          `max(1, int(max_features * n_features_in_))` features are considered at
+          each split.
+        - If "sqrt", then `max_features=sqrt(n_features)`.
+        - If "log2", then `max_features=log2(n_features)`.
+        - If None, then `max_features=n_features`.
 
         Note: the search for a split does not stop until at least one
         valid partition of the node samples is found, even if it requires to
         effectively inspect more than ``max_features`` features.
 
     random_state : int, RandomState instance or None, optional, default: None
-        If int, random_state is the seed used by the random number generator;
-        If RandomState instance, random_state is the random number generator;
-        If None, the random number generator is the RandomState instance used
-        by `np.random`.
+        Controls the randomness of the estimator. The features are always
+        randomly permuted at each split, even if ``splitter`` is set to
+        ``"best"``. When ``max_features < n_features``, the algorithm will
+        select ``max_features`` at random at each split before finding the best
+        split among them. But the best found split may vary across different
+        runs, even if ``max_features=n_features``. That is the case, if the
+        improvement of the criterion is identical for several splits and one
+        split has to be selected at random. To obtain a deterministic behavior
+        during fitting, ``random_state`` has to be fixed to an integer.
 
     max_leaf_nodes : int or None, optional, default: None
         Grow a tree with ``max_leaf_nodes`` in best-first fashion.
         Best nodes are defined as relative reduction in impurity.
         If None then unlimited number of leaf nodes.
 
+    low_memory : boolean, default: False
+        If set, ``predict`` computations use reduced memory but ``predict_cumulative_hazard_function``
+        and ``predict_survival_function`` are not implemented.
+
     Attributes
     ----------
-    event_times_ : array of shape = (n_event_times,)
-        Unique time points where events occurred.
+    unique_times_ : array of shape = (n_unique_times,)
+        Unique time points.
 
     max_features_ : int,
         The inferred value of max_features.
@@ -138,15 +154,42 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
            R News, 7(2), 25–31. https://cran.r-project.org/doc/Rnews/Rnews_2007-2.pdf.
     """
 
-    def __init__(self,
-                 splitter="best",
-                 max_depth=None,
-                 min_samples_split=6,
-                 min_samples_leaf=3,
-                 min_weight_fraction_leaf=0.,
-                 max_features=None,
-                 random_state=None,
-                 max_leaf_nodes=None):
+    _parameter_constraints = {
+        "splitter": [StrOptions({"best", "random"})],
+        "max_depth": [Interval(Integral, 1, None, closed="left"), None],
+        "min_samples_split": [
+            Interval(Integral, 2, None, closed="left"),
+            Interval(Real, 0.0, 1.0, closed="neither"),
+        ],
+        "min_samples_leaf": [
+            Interval(Integral, 1, None, closed="left"),
+            Interval(Real, 0.0, 0.5, closed="right"),
+        ],
+        "min_weight_fraction_leaf": [Interval(Real, 0.0, 0.5, closed="both")],
+        "max_features": [
+            Interval(Integral, 1, None, closed="left"),
+            Interval(Real, 0.0, 1.0, closed="right"),
+            StrOptions({"sqrt", "log2"}),
+            None,
+        ],
+        "random_state": ["random_state"],
+        "max_leaf_nodes": [Interval(Integral, 2, None, closed="left"), None],
+        "low_memory": ["boolean"],
+    }
+
+    def __init__(
+        self,
+        *,
+        splitter="best",
+        max_depth=None,
+        min_samples_split=6,
+        min_samples_leaf=3,
+        min_weight_fraction_leaf=0.0,
+        max_features=None,
+        random_state=None,
+        max_leaf_nodes=None,
+        low_memory=False,
+    ):
         self.splitter = splitter
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
@@ -155,10 +198,59 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         self.max_features = max_features
         self.random_state = random_state
         self.max_leaf_nodes = max_leaf_nodes
+        self.low_memory = low_memory
 
-    def fit(self, X, y, sample_weight=None, check_input=True,
-            X_idx_sorted="deprecated"):
+    def _more_tags(self):
+        allow_nan = self.splitter == "best"
+        return {"allow_nan": allow_nan}
+
+    def _support_missing_values(self, X):
+        return not issparse(X) and self._get_tags()["allow_nan"]
+
+    def _compute_missing_values_in_feature_mask(self, X):
+        """Return boolean mask denoting if there are missing values for each feature.
+
+        This method also ensures that X is finite.
+
+        Parameter
+        ---------
+        X : array-like of shape (n_samples, n_features), dtype=DOUBLE
+            Input data.
+
+        Returns
+        -------
+        missing_values_in_feature_mask : ndarray of shape (n_features,), or None
+            Missing value mask. If missing values are not supported or there
+            are no missing values, return None.
+        """
+        common_kwargs = dict(estimator_name=self.__class__.__name__, input_name="X")
+
+        if not self._support_missing_values(X):
+            assert_all_finite(X, **common_kwargs)
+            return None
+
+        with np.errstate(over="ignore"):
+            overall_sum = np.sum(X)
+
+        if not np.isfinite(overall_sum):
+            # Raise a ValueError in case of the presence of an infinite element.
+            _assert_all_finite_element_wise(X, xp=np, allow_nan=True, **common_kwargs)
+
+        # If the sum is not nan, then there are no missing values
+        if not np.isnan(overall_sum):
+            return None
+
+        missing_values_in_feature_mask = _any_isnan_axis0(X)
+        return missing_values_in_feature_mask
+
+    def fit(self, X, y, sample_weight=None, check_input=True):
         """Build a survival tree from the training set (X, y).
+
+        If ``splitter='best'``, `X` is allowed to contain missing
+        values. In addition to evaluating each potential threshold on
+        the non-missing data, the splitter will evaluate the split
+        with all the missing values going to the left node or the
+        right node. See :ref:`tree_missing_value_support` for details.
 
         Parameters
         ----------
@@ -174,9 +266,6 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
             Allow to bypass several input checking.
             Don't use this parameter unless you know what you do.
 
-        X_idx_sorted : deprecated, default="deprecated"
-            This parameter is deprecated and has no effect
-
         Returns
         -------
         self
@@ -184,10 +273,11 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         random_state = check_random_state(self.random_state)
 
         if check_input:
-            X = self._validate_data(X, ensure_min_samples=2, accept_sparse="csc")
+            X = self._validate_data(X, dtype=DTYPE, ensure_min_samples=2, accept_sparse="csc", force_all_finite=False)
             event, time = check_array_survival(X, y)
             time = time.astype(np.float64)
-            self.event_times_ = np.unique(time[event])
+            self.unique_times_, self.is_event_time_ = get_unique_times(time, event)
+            missing_values_in_feature_mask = self._compute_missing_values_in_feature_mask(X)
             if issparse(X):
                 X.sort_indices()
 
@@ -195,37 +285,32 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
             y_numeric[:, 0] = time
             y_numeric[:, 1] = event.astype(np.float64)
         else:
-            y_numeric, self.event_times_ = y
+            y_numeric, self.unique_times_, self.is_event_time_ = y
+            missing_values_in_feature_mask = None
 
         n_samples, self.n_features_in_ = X.shape
         params = self._check_params(n_samples)
 
-        if not isinstance(X_idx_sorted, str) or X_idx_sorted != "deprecated":
-            warnings.warn(
-                "The parameter 'X_idx_sorted' is deprecated and has no "
-                "effect. It will be removed in sklearn 1.1 (renaming of 0.26). "
-                "You can suppress this warning by not passing any value to the "
-                "'X_idx_sorted' parameter.",
-                FutureWarning
-            )
-
-        self.n_outputs_ = self.event_times_.shape[0]
-        # one "class" for CHF, one for survival function
-        self.n_classes_ = np.ones(self.n_outputs_, dtype=np.intp) * 2
+        if self.low_memory:
+            self.n_outputs_ = 1
+            # one "class" only, for the sum over the CHF
+            self.n_classes_ = np.ones(self.n_outputs_, dtype=np.intp)
+        else:
+            self.n_outputs_ = self.unique_times_.shape[0]
+            # one "class" for CHF, one for survival function
+            self.n_classes_ = np.ones(self.n_outputs_, dtype=np.intp) * 2
 
         # Build tree
-        criterion = LogrankCriterion(self.n_outputs_, n_samples, self.event_times_)
+        self.criterion = "logrank"
+        criterion = LogrankCriterion(self.n_outputs_, n_samples, self.unique_times_, self.is_event_time_)
 
         SPLITTERS = SPARSE_SPLITTERS if issparse(X) else DENSE_SPLITTERS
 
         splitter = self.splitter
         if not isinstance(self.splitter, Splitter):
             splitter = SPLITTERS[self.splitter](
-                criterion,
-                self.max_features_,
-                params["min_samples_leaf"],
-                params["min_weight_leaf"],
-                random_state)
+                criterion, self.max_features_, params["min_samples_leaf"], params["min_weight_leaf"], random_state
+            )
 
         self.tree_ = Tree(self.n_features_in_, self.n_classes_, self.n_outputs_)
 
@@ -250,20 +335,29 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
                 0.0,  # min_impurity_decrease
             )
 
-        builder.build(self.tree_, X, y_numeric, sample_weight)
+        builder.build(self.tree_, X, y_numeric, sample_weight, missing_values_in_feature_mask)
 
         return self
 
     def _check_params(self, n_samples):
-        # Check parameters
-        max_depth = ((2 ** 31) - 1 if self.max_depth is None
-                     else self.max_depth)
-        if max_depth <= 0:
-            raise ValueError("max_depth must be greater than zero.")
+        self._validate_params()
 
-        max_leaf_nodes = self._check_max_leaf_nodes()
-        min_samples_leaf = self._check_min_samples_leaf(n_samples)
-        min_samples_split = self._check_min_samples_split(n_samples)
+        # Check parameters
+        max_depth = (2**31) - 1 if self.max_depth is None else self.max_depth
+
+        max_leaf_nodes = -1 if self.max_leaf_nodes is None else self.max_leaf_nodes
+
+        if isinstance(self.min_samples_leaf, (Integral, np.integer)):
+            min_samples_leaf = self.min_samples_leaf
+        else:  # float
+            min_samples_leaf = int(ceil(self.min_samples_leaf * n_samples))
+
+        if isinstance(self.min_samples_split, Integral):
+            min_samples_split = self.min_samples_split
+        else:  # float
+            min_samples_split = int(ceil(self.min_samples_split * n_samples))
+            min_samples_split = max(2, min_samples_split)
+
         min_samples_split = max(min_samples_split, 2 * min_samples_leaf)
 
         self._check_max_features()
@@ -281,69 +375,20 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
             "min_weight_leaf": min_weight_leaf,
         }
 
-    def _check_max_leaf_nodes(self):
-        max_leaf_nodes = (-1 if self.max_leaf_nodes is None
-                          else self.max_leaf_nodes)
-        if not isinstance(max_leaf_nodes, (numbers.Integral, np.integer)):
-            raise ValueError("max_leaf_nodes must be integral number but was "
-                             "%r" % max_leaf_nodes)
-        if -1 < max_leaf_nodes < 2:
-            raise ValueError(("max_leaf_nodes {} must be either None "
-                              "or larger than 1").format(max_leaf_nodes))
-        return max_leaf_nodes
-
-    def _check_min_samples_leaf(self, n_samples):
-        if isinstance(self.min_samples_leaf, (numbers.Integral, np.integer)):
-            if self.min_samples_leaf < 1:
-                raise ValueError("min_samples_leaf must be at least 1 "
-                                 "or in (0, 0.5], got %s"
-                                 % self.min_samples_leaf)
-            min_samples_leaf = self.min_samples_leaf
-        else:  # float
-            if not 0. < self.min_samples_leaf <= 0.5:
-                raise ValueError("min_samples_leaf must be at least 1 "
-                                 "or in (0, 0.5], got %s"
-                                 % self.min_samples_leaf)
-            min_samples_leaf = int(ceil(self.min_samples_leaf * n_samples))
-        # FIXME throw exception if min_samples_leaf < 2
-        return min_samples_leaf
-
-    def _check_min_samples_split(self, n_samples):
-        if isinstance(self.min_samples_split, (numbers.Integral, np.integer)):
-            if self.min_samples_split < 2:
-                raise ValueError("min_samples_split must be an integer "
-                                 "greater than 1 or a float in (0.0, 1.0]; "
-                                 "got the integer %s"
-                                 % self.min_samples_split)
-            min_samples_split = self.min_samples_split
-        else:  # float
-            if not 0. < self.min_samples_split <= 1.:
-                raise ValueError("min_samples_split must be an integer "
-                                 "greater than 1 or a float in (0.0, 1.0]; "
-                                 "got the float %s"
-                                 % self.min_samples_split)
-            min_samples_split = int(ceil(self.min_samples_split * n_samples))
-            min_samples_split = max(2, min_samples_split)
-        return min_samples_split
-
     def _check_max_features(self):
         if isinstance(self.max_features, str):
-            if self.max_features in ("auto", "sqrt"):
+            if self.max_features == "sqrt":
                 max_features = max(1, int(np.sqrt(self.n_features_in_)))
             elif self.max_features == "log2":
                 max_features = max(1, int(np.log2(self.n_features_in_)))
-            else:
-                raise ValueError(
-                    'Invalid value for max_features. Allowed string '
-                    'values are "auto", "sqrt" or "log2".')
+
         elif self.max_features is None:
             max_features = self.n_features_in_
-        elif isinstance(self.max_features, (numbers.Integral, np.integer)):
+        elif isinstance(self.max_features, (Integral, np.integer)):
             max_features = self.max_features
         else:  # float
             if self.max_features > 0.0:
-                max_features = max(1,
-                                   int(self.max_features * self.n_features_in_))
+                max_features = max(1, int(self.max_features * self.n_features_in_))
             else:
                 max_features = 0
 
@@ -352,10 +397,28 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
 
         self.max_features_ = max_features
 
+    def _check_low_memory(self, function):
+        """Check if `function` is supported in low memory mode and throw if it is not."""
+        if self.low_memory:
+            raise NotImplementedError(
+                f"{function} is not implemented in low memory mode."
+                + " run fit with low_memory=False to disable low memory mode."
+            )
+
     def _validate_X_predict(self, X, check_input, accept_sparse="csr"):
         """Validate X whenever one tries to predict"""
         if check_input:
-            X = self._validate_data(X, dtype=DTYPE, accept_sparse=accept_sparse, reset=False)
+            if self._support_missing_values(X):
+                force_all_finite = "allow-nan"
+            else:
+                force_all_finite = True
+            X = self._validate_data(
+                X,
+                dtype=DTYPE,
+                accept_sparse=accept_sparse,
+                reset=False,
+                force_all_finite=force_all_finite,
+            )
         else:
             # The number of features is checked regardless of `check_input`
             self._check_n_features(X, reset=False)
@@ -380,6 +443,9 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         ----------
         X : array-like or sparse matrix, shape = (n_samples, n_features)
             Data matrix.
+            If ``splitter='best'``, `X` is allowed to contain missing
+            values and decisions are made as described in
+            :ref:`tree_missing_value_support`.
 
         check_input : boolean, default: True
             Allow to bypass several input checking.
@@ -390,8 +456,15 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         risk_scores : ndarray, shape = (n_samples,)
             Predicted risk scores.
         """
+
+        if self.low_memory:
+            check_is_fitted(self, "tree_")
+            X = self._validate_X_predict(X, check_input, accept_sparse="csr")
+            pred = self.tree_.predict(X)
+            return pred[..., 0]
+
         chf = self.predict_cumulative_hazard_function(X, check_input, return_array=True)
-        return chf.sum(1)
+        return chf[:, self.is_event_time_].sum(1)
 
     def predict_cumulative_hazard_function(self, X, check_input=True, return_array=False):
         """Predict cumulative hazard function.
@@ -406,6 +479,9 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         ----------
         X : array-like or sparse matrix, shape = (n_samples, n_features)
             Data matrix.
+            If ``splitter='best'``, `X` is allowed to contain missing
+            values and decisions are made as described in
+            :ref:`tree_missing_value_support`.
 
         check_input : boolean, default: True
             Allow to bypass several input checking.
@@ -413,14 +489,14 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
 
         return_array : boolean, default: False
             If set, return an array with the cumulative hazard rate
-            for each `self.event_times_`, otherwise an array of
+            for each `self.unique_times_`, otherwise an array of
             :class:`sksurv.functions.StepFunction`.
 
         Returns
         -------
         cum_hazard : ndarray
             If `return_array` is set, an array with the cumulative hazard rate
-            for each `self.event_times_`, otherwise an array of length `n_samples`
+            for each `self.unique_times_`, otherwise an array of length `n_samples`
             of :class:`sksurv.functions.StepFunction` instances will be returned.
 
         Examples
@@ -450,14 +526,15 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         >>> plt.ylim(0, 1)
         >>> plt.show()
         """
-        check_is_fitted(self, 'tree_')
+        self._check_low_memory("predict_cumulative_hazard_function")
+        check_is_fitted(self, "tree_")
         X = self._validate_X_predict(X, check_input, accept_sparse="csr")
 
         pred = self.tree_.predict(X)
         arr = pred[..., 0]
         if return_array:
             return arr
-        return _array_to_step_function(self.event_times_, arr)
+        return _array_to_step_function(self.unique_times_, arr)
 
     def predict_survival_function(self, X, check_input=True, return_array=False):
         """Predict survival function.
@@ -472,6 +549,9 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         ----------
         X : array-like or sparse matrix, shape = (n_samples, n_features)
             Data matrix.
+            If ``splitter='best'``, `X` is allowed to contain missing
+            values and decisions are made as described in
+            :ref:`tree_missing_value_support`.
 
         check_input : boolean, default: True
             Allow to bypass several input checking.
@@ -479,14 +559,14 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
 
         return_array : boolean, default: False
             If set, return an array with the probability
-            of survival for each `self.event_times_`,
+            of survival for each `self.unique_times_`,
             otherwise an array of :class:`sksurv.functions.StepFunction`.
 
         Returns
         -------
         survival : ndarray
             If `return_array` is set, an array with the probability of
-            survival for each `self.event_times_`, otherwise an array of
+            survival for each `self.unique_times_`, otherwise an array of
             length `n_samples` of :class:`sksurv.functions.StepFunction`
             instances will be returned.
 
@@ -517,14 +597,15 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
         >>> plt.ylim(0, 1)
         >>> plt.show()
         """
-        check_is_fitted(self, 'tree_')
+        self._check_low_memory("predict_survival_function")
+        check_is_fitted(self, "tree_")
         X = self._validate_X_predict(X, check_input, accept_sparse="csr")
 
         pred = self.tree_.predict(X)
         arr = pred[..., 1]
         if return_array:
             return arr
-        return _array_to_step_function(self.event_times_, arr)
+        return _array_to_step_function(self.unique_times_, arr)
 
     def apply(self, X, check_input=True):
         """Return the index of the leaf that each sample is predicted as.
@@ -535,6 +616,9 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
             to a sparse ``csr_matrix``.
+            If ``splitter='best'``, `X` is allowed to contain missing
+            values and decisions are made as described in
+            :ref:`tree_missing_value_support`.
 
         check_input : bool, default: True
             Allow to bypass several input checking.
@@ -561,6 +645,9 @@ class SurvivalTree(BaseEstimator, SurvivalAnalysisMixin):
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
             to a sparse ``csr_matrix``.
+            If ``splitter='best'``, `X` is allowed to contain missing
+            values and decisions are made as described in
+            :ref:`tree_missing_value_support`.
 
         check_input : bool, default=True
             Allow to bypass several input checking.

@@ -12,9 +12,11 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import numpy as np
 from sklearn.base import MetaEstimatorMixin, clone
+from sklearn.utils._param_validation import HasMethods
 from sklearn.utils.metaestimators import _BaseComposition, available_if
 
 from ..base import SurvivalAnalysisMixin
+from ..util import property_available_if
 
 
 def _meta_estimator_has(attr):
@@ -68,8 +70,18 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
     feature_names_in_ : ndarray of shape (`n_features_in_`,)
         Names of features seen during ``fit``. Defined only when `X`
         has feature names that are all strings.
+
+    unique_times_ : array of shape = (n_unique_times,)
+        Unique time points.
     """
-    def __init__(self, meta_estimator, base_estimators, probabilities=True):
+
+    _parameter_constraints = {
+        "meta_estimator": [HasMethods(["fit"])],
+        "base_estimators": [list],
+        "probabilities": ["boolean"],
+    }
+
+    def __init__(self, meta_estimator, base_estimators, *, probabilities=True):
         self.meta_estimator = meta_estimator
         self.base_estimators = base_estimators
         self.probabilities = probabilities
@@ -79,18 +91,15 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
     def _validate_estimators(self):
         names, estimators = zip(*self.base_estimators)
         if len(set(names)) != len(self.base_estimators):
-            raise ValueError("Names provided are not unique: %s" % (names,))
+            raise ValueError(f"Names provided are not unique: {names}")
 
         for t in estimators:
             if not hasattr(t, "fit") or not (hasattr(t, "predict") or hasattr(t, "predict_proba")):
-                raise TypeError("All base estimators should implement "
-                                "fit and predict/predict_proba"
-                                " '%s' (type %s) doesn't)" % (t, type(t)))
-
-        if not hasattr(self.meta_estimator, "fit"):
-            raise TypeError("meta estimator should implement fit "
-                            "'%s' (type %s) doesn't)"
-                            % (self.meta_estimator, type(self.meta_estimator)))
+                raise TypeError(
+                    "All base estimators should implement "
+                    "fit and predict/predict_proba"
+                    f" {t!s} (type {type(t)}) doesn't)"
+                )
 
     def set_params(self, **params):
         """
@@ -141,7 +150,7 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
     def _split_fit_params(self, fit_params):
         fit_params_steps = {step: {} for step, _ in self.base_estimators}
         for pname, pval in fit_params.items():
-            step, param = pname.split('__', 1)
+            step, param = pname.split("__", 1)
             fit_params_steps[step][param] = pval
         return fit_params_steps
 
@@ -172,7 +181,6 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
         Xt = None
         start = 0
         for estimator in self.estimators_:
-
             if self.probabilities and hasattr(estimator, "predict_proba"):
                 p = estimator.predict_proba(X)
             else:
@@ -184,7 +192,7 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
             if Xt is None:
                 # assume that prediction array has the same size for all base learners
                 n_classes = p.shape[1]
-                Xt = np.empty((p.shape[0], n_classes * len(self.base_estimators)), order='F')
+                Xt = np.empty((p.shape[0], n_classes * len(self.base_estimators)), order="F")
             Xt[:, slice(start, start + n_classes)] = p
             start += n_classes
 
@@ -208,6 +216,7 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
         -------
         self
         """
+        self._validate_params()
         self._validate_estimators()
         self._fit_estimators(X, y, **fit_params)
         Xt = self._predict_estimators(X)
@@ -215,7 +224,7 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
 
         return self
 
-    @available_if(_meta_estimator_has('predict'))
+    @available_if(_meta_estimator_has("predict"))
     def predict(self, X):
         """Perform prediction.
 
@@ -237,11 +246,11 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
         Xt = self._predict_estimators(X)
         return self.final_estimator_.predict(Xt)
 
-    @available_if(_meta_estimator_has('predict_proba'))
+    @available_if(_meta_estimator_has("predict_proba"))
     def predict_proba(self, X):
         """Perform prediction.
 
-        Only available of the meta estimator has a predict_proba method.
+        Only available if the meta estimator has a predict_proba method.
 
         Parameters
         ----------
@@ -259,11 +268,11 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
         Xt = self._predict_estimators(X)
         return self.final_estimator_.predict_proba(Xt)
 
-    @available_if(_meta_estimator_has('predict_log_proba'))
+    @available_if(_meta_estimator_has("predict_log_proba"))
     def predict_log_proba(self, X):
         """Perform prediction.
 
-        Only available of the meta estimator has a predict_log_proba method.
+        Only available if the meta estimator has a predict_log_proba method.
 
         Parameters
         ----------
@@ -280,3 +289,61 @@ class Stacking(MetaEstimatorMixin, SurvivalAnalysisMixin, _BaseComposition):
         """
         Xt = self._predict_estimators(X)
         return self.final_estimator_.predict_log_proba(Xt)
+
+    @property_available_if(_meta_estimator_has("unique_times_"))
+    def unique_times_(self):
+        return self.meta_estimator.unique_times_
+
+    @available_if(_meta_estimator_has("predict_cumulative_hazard_function"))
+    def predict_cumulative_hazard_function(self, X, return_array=False):
+        """Perform prediction.
+
+        Only available if the meta estimator has a predict_cumulative_hazard_function method.
+
+        Parameters
+        ----------
+        X : array-like, shape = (n_samples, n_features)
+            Data with samples to predict.
+
+        return_array : boolean, default: False
+            If set, return an array with the cumulative hazard rate
+            for each `self.unique_times_`, otherwise an array of
+            :class:`sksurv.functions.StepFunction`.
+
+        Returns
+        -------
+        cum_hazard : ndarray
+            If `return_array` is set, an array with the cumulative hazard rate
+            for each `self.unique_times_`, otherwise an array of length `n_samples`
+            of :class:`sksurv.functions.StepFunction` instances will be returned.
+        """
+        Xt = self._predict_estimators(X)
+        return self.final_estimator_.predict_cumulative_hazard_function(Xt, return_array)
+
+    @available_if(_meta_estimator_has("predict_survival_function"))
+    def predict_survival_function(self, X, return_array=False):
+        """Perform prediction.
+
+        Only available if the meta estimator has a predict_survival_function method.
+
+        Parameters
+        ----------
+        X : array-like, shape = (n_samples, n_features)
+            Data with samples to predict.
+
+        Returns
+        -------
+        survival : ndarray
+            If `return_array` is set, an array with the probability of
+            survival for each `self.unique_times_`, otherwise an array of
+            length `n_samples` of :class:`sksurv.functions.StepFunction`
+            instances will be returned.
+
+        return_array : boolean, default: False
+            If set, return an array with the probability
+            of survival for each `self.unique_times_`,
+            otherwise an array of :class:`sksurv.functions.StepFunction`.
+
+        """
+        Xt = self._predict_estimators(X)
+        return self.final_estimator_.predict_survival_function(Xt, return_array)

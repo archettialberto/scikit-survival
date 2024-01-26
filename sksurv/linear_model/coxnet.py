@@ -10,12 +10,14 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+import numbers
 import warnings
 
 import numpy as np
 from sklearn.base import BaseEstimator
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.preprocessing import normalize as f_normalize
+from sklearn.utils._param_validation import Interval, StrOptions
 from sklearn.utils.validation import assert_all_finite, check_is_fitted, check_non_negative, column_or_1d
 
 from ..base import SurvivalAnalysisMixin
@@ -23,7 +25,7 @@ from ..util import check_array_survival
 from ._coxnet import call_fit_coxnet
 from .coxph import BreslowEstimator
 
-__all__ = ['CoxnetSurvivalAnalysis']
+__all__ = ["CoxnetSurvivalAnalysis"]
 
 
 class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
@@ -63,9 +65,10 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         This is a number that multiplies alpha to allow differential
         shrinkage.  Can be 0 for some variables, which implies no shrinkage,
         and that variable is always included in the model.
-        Default is 1 for all variables. Note: the penalty factors are
-        internally rescaled to sum to n_features, and the alphas sequence
-        will reflect this change.
+        Default is 1 for all variables.
+
+        Note: the penalty factors are internally rescaled to sum to
+        `n_features`, and the alphas sequence will reflect this change.
 
     normalize : boolean, optional, default: False
         If True, the features X will be normalized before optimization by
@@ -121,8 +124,8 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         Names of features seen during ``fit``. Defined only when `X`
         has feature names that are all strings.
 
-    event_times_ : array of shape = (n_event_times,)
-        Unique time points where events occurred.
+    unique_times_ : array of shape = (n_unique_times,)
+        Unique time points.
 
     References
     ----------
@@ -131,9 +134,35 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
            Journal of statistical software. 2011 Mar;39(5):1.
     """
 
-    def __init__(self, n_alphas=100, alphas=None, alpha_min_ratio="auto", l1_ratio=0.5,
-                 penalty_factor=None, normalize=False, copy_X=True,
-                 tol=1e-7, max_iter=100000, verbose=False, fit_baseline_model=False):
+    _parameter_constraints: dict = {
+        "n_alphas": [Interval(numbers.Integral, 1, None, closed="left")],
+        "alphas": ["array-like", None],
+        "alpha_min_ratio": [Interval(numbers.Real, 0, None, closed="neither"), StrOptions({"auto"})],
+        "l1_ratio": [Interval(numbers.Real, 0.0, 1.0, closed="right")],
+        "penalty_factor": ["array-like", None],
+        "normalize": ["boolean"],
+        "copy_X": ["boolean"],
+        "tol": [Interval(numbers.Real, 0, None, closed="left")],
+        "max_iter": [Interval(numbers.Integral, 1, None, closed="left")],
+        "verbose": ["verbose"],
+        "fit_baseline_model": ["boolean"],
+    }
+
+    def __init__(
+        self,
+        *,
+        n_alphas=100,
+        alphas=None,
+        alpha_min_ratio="auto",
+        l1_ratio=0.5,
+        penalty_factor=None,
+        normalize=False,
+        copy_X=True,
+        tol=1e-7,
+        max_iter=100000,
+        verbose=False,
+        fit_baseline_model=False,
+    ):
         self.n_alphas = n_alphas
         self.alphas = alphas
         self.alpha_min_ratio = alpha_min_ratio
@@ -172,8 +201,9 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         else:
             pf = column_or_1d(self.penalty_factor, warn=True)
             if pf.shape[0] != n_features:
-                raise ValueError("penalty_factor must be array of length n_features (%d), "
-                                 "but got %d" % (n_features, pf.shape[0]))
+                raise ValueError(
+                    f"penalty_factor must be array of length n_features ({n_features}), but got {pf.shape[0]}"
+                )
             assert_all_finite(pf, input_name="penalty_factor")
             check_non_negative(pf, "penalty_factor")
             penalty_factor = pf * n_features / pf.sum()
@@ -193,27 +223,17 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         return alphas, create_path
 
     def _check_alpha_min_ratio(self, n_samples, n_features):
-        if isinstance(self.alpha_min_ratio, str):
-            if self.alpha_min_ratio == "auto":
-                if n_samples > n_features:
-                    alpha_min_ratio = 0.0001
-                else:
-                    alpha_min_ratio = 0.01
+        alpha_min_ratio = self.alpha_min_ratio
+        if isinstance(alpha_min_ratio, str) and self.alpha_min_ratio == "auto":
+            if n_samples > n_features:
+                alpha_min_ratio = 0.0001
             else:
-                raise ValueError("Invalid value for alpha_min_ratio. "
-                                 "Allowed string values are 'auto'.")
-        else:
-            alpha_min_ratio = float(self.alpha_min_ratio)
-            if alpha_min_ratio <= 0 or not np.isfinite(alpha_min_ratio):
-                raise ValueError("alpha_min_ratio must be positive")
+                alpha_min_ratio = 0.01
+
         return alpha_min_ratio
 
     def _check_params(self, n_samples, n_features):
-        if not 0 < self.l1_ratio <= 1:
-            raise ValueError("l1_ratio must be in interval ]0;1], but was %f" % self.l1_ratio)
-
-        if self.tol <= 0:
-            raise ValueError("tolerance must be positive, but was %f" % self.tol)
+        self._validate_params()
 
         penalty_factor = self._check_penalty_factor(n_features)
 
@@ -247,29 +267,37 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         create_path, alphas, penalty, alpha_min_ratio = self._check_params(*X.shape)
 
         coef, alphas, deviance_ratio, n_iter = call_fit_coxnet(
-            X, time, event_num, penalty, alphas, create_path,
-            alpha_min_ratio, self.l1_ratio, int(self.max_iter),
-            self.tol, self.verbose)
+            X,
+            time,
+            event_num,
+            penalty,
+            alphas,
+            create_path,
+            alpha_min_ratio,
+            self.l1_ratio,
+            int(self.max_iter),
+            self.tol,
+            self.verbose,
+        )
         assert np.isfinite(coef).all()
 
         if np.all(np.absolute(coef) < np.finfo(float).eps):
-            warnings.warn('all coefficients are zero, consider decreasing alpha.',
-                          stacklevel=2)
+            warnings.warn("all coefficients are zero, consider decreasing alpha.", stacklevel=2)
 
         if n_iter >= self.max_iter:
-            warnings.warn('Optimization terminated early, you might want'
-                          ' to increase the number of iterations (max_iter=%d).'
-                          % self.max_iter,
-                          category=ConvergenceWarning,
-                          stacklevel=2)
+            warnings.warn(
+                "Optimization terminated early, you might want"
+                f" to increase the number of iterations (max_iter={self.max_iter}).",
+                category=ConvergenceWarning,
+                stacklevel=2,
+            )
 
         coef /= X_scale[:, np.newaxis]
 
         if self.fit_baseline_model:
             predictions = np.dot(X, coef)
             self._baseline_models = tuple(
-                BreslowEstimator().fit(predictions[:, i], event_num, time)
-                for i in range(coef.shape[1])
+                BreslowEstimator().fit(predictions[:, i], event_num, time) for i in range(coef.shape[1])
             )
         else:
             self._baseline_models = None
@@ -345,7 +373,7 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
     def _get_baseline_model(self, alpha):
         check_is_fitted(self, "coef_")
         if self._baseline_models is None:
-            raise ValueError('`fit` must be called with the fit_baseline_model option set to True.')
+            raise ValueError("`fit` must be called with the fit_baseline_model option set to True.")
 
         if alpha is None:
             baseline_model = self._baseline_models[-1]
@@ -355,7 +383,7 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
                 idx = np.flatnonzero(is_close)[0]
                 baseline_model = self._baseline_models[idx]
             else:
-                raise ValueError('alpha must be one value of alphas_: %s' % self.alphas_)
+                raise ValueError(f"alpha must be one value of alphas_: {self.alphas_}")
 
         return baseline_model
 
@@ -385,14 +413,14 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
 
         return_array : boolean, default: False
             If set, return an array with the cumulative hazard rate
-            for each `self.event_times_`, otherwise an array of
+            for each `self.unique_times_`, otherwise an array of
             :class:`sksurv.functions.StepFunction`.
 
         Returns
         -------
         cum_hazard : ndarray
             If `return_array` is set, an array with the cumulative hazard rate
-            for each `self.event_times_`, otherwise an array of length `n_samples`
+            for each `self.unique_times_`, otherwise an array of length `n_samples`
             of :class:`sksurv.functions.StepFunction` instances will be returned.
 
         Examples
@@ -425,16 +453,14 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         >>> for alpha, chf_alpha in chf_funcs.items():
         ...     for fn in chf_alpha:
         ...         plt.step(fn.x, fn(fn.x), where="post",
-        ...                  label="alpha = {:.3f}".format(alpha))
+        ...                  label=f"alpha = {alpha:.3f}")
         ...
         >>> plt.ylim(0, 1)
         >>> plt.legend()
         >>> plt.show()
         """
         baseline_model = self._get_baseline_model(alpha)
-        return self._predict_cumulative_hazard_function(
-            baseline_model, self.predict(X, alpha=alpha), return_array
-        )
+        return self._predict_cumulative_hazard_function(baseline_model, self.predict(X, alpha=alpha), return_array)
 
     def predict_survival_function(self, X, alpha=None, return_array=False):
         """Predict survival function.
@@ -462,14 +488,14 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
 
         return_array : boolean, default: False
             If set, return an array with the probability
-            of survival for each `self.event_times_`,
+            of survival for each `self.unique_times_`,
             otherwise an array of :class:`sksurv.functions.StepFunction`.
 
         Returns
         -------
         survival : ndarray
             If `return_array` is set, an array with the probability of
-            survival for each `self.event_times_`, otherwise an array of
+            survival for each `self.unique_times_`, otherwise an array of
             length `n_samples` of :class:`sksurv.functions.StepFunction`
             instances will be returned.
 
@@ -503,17 +529,15 @@ class CoxnetSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         >>> for alpha, surv_alpha in surv_funcs.items():
         ...     for fn in surv_alpha:
         ...         plt.step(fn.x, fn(fn.x), where="post",
-        ...                  label="alpha = {:.3f}".format(alpha))
+        ...                  label=f"alpha = {alpha:.3f}")
         ...
         >>> plt.ylim(0, 1)
         >>> plt.legend()
         >>> plt.show()
         """
         baseline_model = self._get_baseline_model(alpha)
-        return self._predict_survival_function(
-            baseline_model, self.predict(X, alpha=alpha), return_array
-        )
+        return self._predict_survival_function(baseline_model, self.predict(X, alpha=alpha), return_array)
 
     @property
-    def event_times_(self):
+    def unique_times_(self):
         return self._get_baseline_model(None).unique_times_

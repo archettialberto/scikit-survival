@@ -2,20 +2,28 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from pkg_resources import resource_filename
+from pandas.api.types import CategoricalDtype
 
 from ..column import categorical_to_numeric, standardize
 from ..io import loadarff
 from ..util import safe_concat
 
-__all__ = ["get_x_y",
-           "load_arff_files_standardized",
-           "load_aids",
-           "load_breast_cancer",
-           "load_flchain",
-           "load_gbsg2",
-           "load_whas500",
-           "load_veterans_lung_cancer"]
+__all__ = [
+    "get_x_y",
+    "load_arff_files_standardized",
+    "load_aids",
+    "load_breast_cancer",
+    "load_flchain",
+    "load_gbsg2",
+    "load_whas500",
+    "load_veterans_lung_cancer",
+]
+
+
+def _get_data_path(name):
+    from importlib.resources import files
+
+    return files(__package__) / "data" / name
 
 
 def _get_x_y_survival(dataset, col_event, col_time, val_outcome):
@@ -80,7 +88,7 @@ def get_x_y(data_frame, attr_labels, pos_label=None, survival=True):
     """
     if survival:
         if len(attr_labels) != 2:
-            raise ValueError("expected sequence of length two for attr_labels, but got %d" % len(attr_labels))
+            raise ValueError(f"expected sequence of length two for attr_labels, but got {len(attr_labels)}")
         if pos_label is None:
             raise ValueError("pos_label needs to be specified if survival=True")
         return _get_x_y_survival(data_frame, attr_labels[0], attr_labels[1], pos_label)
@@ -88,8 +96,26 @@ def get_x_y(data_frame, attr_labels, pos_label=None, survival=True):
     return _get_x_y_other(data_frame, attr_labels)
 
 
-def load_arff_files_standardized(path_training, attr_labels, pos_label=None, path_testing=None, survival=True,
-                                 standardize_numeric=True, to_numeric=True):
+def _loadarff_with_index(filename):
+    dataset = loadarff(filename)
+    if "index" in dataset.columns:
+        if isinstance(dataset["index"].dtype, CategoricalDtype):
+            # concatenating categorical index may raise TypeError
+            # see https://github.com/pandas-dev/pandas/issues/14586
+            dataset["index"] = dataset["index"].astype(object)
+        dataset.set_index("index", inplace=True)
+    return dataset
+
+
+def load_arff_files_standardized(
+    path_training,
+    attr_labels,
+    pos_label=None,
+    path_testing=None,
+    survival=True,
+    standardize_numeric=True,
+    to_numeric=True,
+):
     """Load dataset in ARFF format.
 
     Parameters
@@ -137,10 +163,7 @@ def load_arff_files_standardized(path_training, attr_labels, pos_label=None, pat
     y_test : None or pandas.DataFrame, shape = (n_train, n_labels)
         Dependent variables of testing data if `path_testing` was provided.
     """
-    dataset = loadarff(path_training)
-    if "index" in dataset.columns:
-        dataset.index = dataset["index"].astype(object)
-        dataset.drop("index", axis=1, inplace=True)
+    dataset = _loadarff_with_index(path_training)
 
     x_train, y_train = get_x_y(dataset, attr_labels, pos_label, survival)
 
@@ -148,8 +171,7 @@ def load_arff_files_standardized(path_training, attr_labels, pos_label=None, pat
         x_test, y_test = _load_arff_testing(path_testing, attr_labels, pos_label, survival)
 
         if len(x_train.columns.symmetric_difference(x_test.columns)) > 0:
-            warnings.warn("Restricting columns to intersection between training and testing data",
-                          stacklevel=2)
+            warnings.warn("Restricting columns to intersection between training and testing data", stacklevel=2)
 
             cols = x_train.columns.intersection(x_test.columns)
             if len(cols) == 0:
@@ -180,10 +202,7 @@ def load_arff_files_standardized(path_training, attr_labels, pos_label=None, pat
 
 
 def _load_arff_testing(path_testing, attr_labels, pos_label, survival):
-    test_dataset = loadarff(path_testing)
-    if "index" in test_dataset.columns:
-        test_dataset.index = test_dataset["index"].astype(object)
-        test_dataset.drop("index", axis=1, inplace=True)
+    test_dataset = _loadarff_with_index(path_testing)
 
     has_labels = pd.Index(attr_labels).isin(test_dataset.columns).all()
     if not has_labels:
@@ -222,8 +241,8 @@ def load_whas500():
         "Applied Survival Analysis: Regression Modeling of Time to Event Data."
         John Wiley & Sons, Inc. (2008)
     """
-    fn = resource_filename(__name__, 'data/whas500.arff')
-    return get_x_y(loadarff(fn), attr_labels=['fstat', 'lenfol'], pos_label='1')
+    fn = _get_data_path("whas500.arff")
+    return get_x_y(loadarff(fn), attr_labels=["fstat", "lenfol"], pos_label="1")
 
 
 def load_gbsg2():
@@ -254,8 +273,8 @@ def load_gbsg2():
         in node-positive breast cancer patients."
         Journal of Clinical Oncology 12, 2086–2093. (1994)
     """
-    fn = resource_filename(__name__, 'data/GBSG2.arff')
-    return get_x_y(loadarff(fn), attr_labels=['cens', 'time'], pos_label='1')
+    fn = _get_data_path("GBSG2.arff")
+    return get_x_y(loadarff(fn), attr_labels=["cens", "time"], pos_label="1")
 
 
 def load_veterans_lung_cancer():
@@ -283,8 +302,8 @@ def load_veterans_lung_cancer():
     .. [1] Kalbfleisch, J.D., Prentice, R.L.:
         "The Statistical Analysis of Failure Time Data." John Wiley & Sons, Inc. (2002)
     """
-    fn = resource_filename(__name__, 'data/veteran.arff')
-    return get_x_y(loadarff(fn), attr_labels=['Status', 'Survival_in_days'], pos_label="dead")
+    fn = _get_data_path("veteran.arff")
+    return get_x_y(loadarff(fn), attr_labels=["Status", "Survival_in_days"], pos_label="dead")
 
 
 def load_aids(endpoint="aids"):
@@ -324,8 +343,8 @@ def load_aids(endpoint="aids"):
         "Applied Survival Analysis: Regression Modeling of Time to Event Data."
         John Wiley & Sons, Inc. (2008)
     """
-    labels_aids = ['censor', 'time']
-    labels_death = ['censor_d', 'time_d']
+    labels_aids = ["censor", "time"]
+    labels_death = ["censor_d", "time_d"]
     if endpoint == "aids":
         attr_labels = labels_aids
         drop_columns = labels_death
@@ -335,8 +354,8 @@ def load_aids(endpoint="aids"):
     else:
         raise ValueError("endpoint must be 'aids' or 'death'")
 
-    fn = resource_filename(__name__, 'data/actg320.arff')
-    x, y = get_x_y(loadarff(fn), attr_labels=attr_labels, pos_label='1')
+    fn = _get_data_path("actg320.arff")
+    x, y = get_x_y(loadarff(fn), attr_labels=attr_labels, pos_label="1")
     x.drop(drop_columns, axis=1, inplace=True)
     return x, y
 
@@ -369,8 +388,8 @@ def load_breast_cancer():
         Patients in the TRANSBIG Multicenter Independent Validation Series."
         Clin. Cancer Res. 13(11), 3207–14 (2007)
     """
-    fn = resource_filename(__name__, 'data/breast_cancer_GSE7390-metastasis.arff')
-    return get_x_y(loadarff(fn), attr_labels=['e.tdm', 't.tdm'], pos_label="1")
+    fn = _get_data_path("breast_cancer_GSE7390-metastasis.arff")
+    return get_x_y(loadarff(fn), attr_labels=["e.tdm", "t.tdm"], pos_label="1")
 
 
 def load_flchain():
@@ -410,8 +429,8 @@ def load_flchain():
 
     .. [2] Dispenzieri, A., Katzmann, J., Kyle, R., Larson, D., Therneau, T., Colby, C., Clark, R.,
            Mead, G., Kumar, S., Melton III, LJ. and Rajkumar, SV.
-           Use of monclonal serum immunoglobulin free light chains to predict overall survival in
+           Use of nonclonal serum immunoglobulin free light chains to predict overall survival in
            the general population, Mayo Clinic Proceedings 87:512-523. (2012)
     """
-    fn = resource_filename(__name__, 'data/flchain.arff')
-    return get_x_y(loadarff(fn), attr_labels=['death', 'futime'], pos_label='dead')
+    fn = _get_data_path("flchain.arff")
+    return get_x_y(loadarff(fn), attr_labels=["death", "futime"], pos_label="dead")

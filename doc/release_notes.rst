@@ -1,6 +1,183 @@
 Release Notes
 =============
 
+scikit-survival 0.22.2 (2023-12-30)
+-----------------------------------
+
+This release adds support for Python 3.12.
+
+Bug fixes
+^^^^^^^^^
+- Fix invalid escape sequence in :ref:`Introduction </user_guide/00-introduction.ipynb>` of user guide.
+
+Enhancements
+^^^^^^^^^^^^
+- Mark Cython functions as noexcept (:issue:`418`).
+- Add support for Python 3.12 (:issue:`422`).
+- Do not use deprecated ``is_categorical_dtype()`` of Pandas API.
+
+Documentation
+^^^^^^^^^^^^^
+- Add section :ref:`building-cython-code` to contributing guidelines (:issue:`379`).
+- Improve the description of the ``estimate`` parameter in :func:`sksurv.metrics.brier_score`
+  and :func:`sksurv.metrics.integrated_brier_score` (:issue:`424`).
+
+
+scikit-survival 0.22.1 (2023-10-08)
+-----------------------------------
+
+Bug fixes
+^^^^^^^^^
+- Fix error in :meth:`sksurv.tree.SurvivalTree.fit` if ``X`` has missing values and dtype other than float32 (:issue:`412`).
+
+
+scikit-survival 0.22.0 (2023-10-01)
+-----------------------------------
+
+This release adds support for scikit-learn 1.3,
+which includes :ref:`missing value support <tree_missing_value_support>` for
+:class:`sksurv.tree.SurvivalTree`.
+Support for previous versions of scikit-learn has been dropped.
+
+Moreover, a ``low_memory`` option has been added to :class:`sksurv.ensemble.RandomSurvivalForest`,
+:class:`sksurv.ensemble.ExtraSurvivalTrees`, and :class:`sksurv.tree.SurvivalTree`
+which reduces the memory footprint of calling ``predict``, but disables the use
+of ``predict_cumulative_hazard_function`` and ``predict_survival_function``.
+
+Bug fixes
+^^^^^^^^^
+- Fix issue where an estimator could be fit to data containing
+  negative event times (:issue:`410`).
+
+Enhancements
+^^^^^^^^^^^^
+- Expand test_stacking.py coverage w.r.t. ``predict_log_proba`` (:issue:`380`).
+- Add ``low_memory`` option to :class:`sksurv.ensemble.RandomSurvivalForest`,
+  :class:`sksurv.ensemble.ExtraSurvivalTrees`, and
+  :class:`sksurv.tree.SurvivalTree`. If set, ``predict`` computations use
+  less memory, but ``predict_cumulative_hazard_function``
+  and ``predict_survival_function`` are not implemented (:issue:`369`).
+- Allow calling :meth:`sksurv.meta.Stacking.predict_cumulative_hazard_function`
+  and :meth:`sksurv.meta.Stacking.predict_survival_function`
+  if the meta estimator supports it (:issue:`388`).
+- Add support for missing values in :class:`sksurv.tree.SurvivalTree` based
+  on missing value support in scikit-learn 1.3 (:issue:`405`).
+- Update bundled Eigen to 3.4.0.
+
+Documentation
+^^^^^^^^^^^^^
+- Add :attr:`sksurv.meta.Stacking.unique_times_` to API docs.
+- Upgrade to Sphinx 6.2.1 and pydata_sphinx_theme 0.13.3 (:issue:`390`).
+
+Backwards incompatible changes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- The ``loss_`` attribute of :class:`sksurv.ensemble.ComponentwiseGradientBoostingSurvivalAnalysis`
+  and :class:`sksurv.ensemble.GradientBoostingSurvivalAnalysis` has been removed (:issue:`402`).
+- Support for ``max_features='auto'`` in :class:`sksurv.ensemble.GradientBoostingSurvivalAnalysis`
+  and :class:`sksurv.tree.SurvivalTree` has been removed (:issue:`402`).
+
+
+scikit-survival 0.21.0 (2023-06-11)
+-----------------------------------
+
+This is a major release bringing new features and performance improvements.
+
+- :func:`sksurv.nonparametric.kaplan_meier_estimator` can estimate
+  pointwise confidence intervals by specifying the `conf_type` parameter.
+- :class:`sksurv.ensemble.GradientBoostingSurvivalAnalysis` supports
+  early-stopping via the `monitor` parameter of
+  :meth:`sksurv.ensemble.GradientBoostingSurvivalAnalysis.fit`.
+- :func:`sksurv.metrics.concordance_index_censored` has a significantly
+  reduced memory footprint. Memory usage now scales linear, instead of quadratic,
+  in the number of samples.
+- Fitting of :class:`sksurv.tree.SurvivalTree`,
+  :class:`sksurv.ensemble.RandomSurvivalForest`, or :class:`sksurv.ensemble.ExtraSurvivalTrees`
+  is about 3x faster.
+- Finally, the release adds support for Python 3.11 and pandas 2.0.
+
+Bug fixes
+^^^^^^^^^
+- Fix bug where `times` passed to :func:`sksurv.metrics.brier_score`
+  was downcast, resulting in a loss of precision that may lead
+  to duplicate time points (:issue:`349`).
+- Fix inconsistent behavior of evaluating functions returned by
+  `predict_cumulative_hazard_function` or `predict_survival_function`
+  (:issue:`375`).
+
+Enhancements
+^^^^^^^^^^^^
+- :func:`sksurv.nonparametric.kaplan_meier_estimator`
+  and :class:`sksurv.nonparametric.CensoringDistributionEstimator`
+  support returning confidence intervals by specifying the `conf_type`
+  parameter (:issue:`348`).
+- Configure package via pyproject.toml (:issue:`347`).
+- Add support for Python 3.11 (:issue:`350`).
+- Add support for early-stopping to
+  :class:`sksurv.ensemble.GradientBoostingSurvivalAnalysis`
+  (:issue:`354`).
+- Do not use deprecated `pkg_resources` API (:issue:`353`).
+- Significantly reduce memory usage of :func:`sksurv.metrics.concordance_index_censored`
+  (:issue:`362`).
+- Set `criterion` attribute in :class:`sksurv.tree.SurvivalTree`
+  such that :func:`sklearn.tree.plot_tree` can be used (:issue:`366`).
+- Significantly improve speed to fit a :class:`sksurv.tree.SurvivalTree`,
+  :class:`sksurv.ensemble.RandomSurvivalForest`, or :class:`sksurv.ensemble.ExtraSurvivalTrees`
+  (:issue:`371`).
+- Expose ``_predict_risk_score`` attribute in :class:`sklearn.pipeline.Pipeline`
+  if the final estimator of the pipeline has such property (:issue:`374`).
+- Add support for pandas 2.0 (:issue:`373`).
+
+Documentation
+^^^^^^^^^^^^^
+- Fix wrong number of selected features in the guide
+  :ref:`Introduction to Survival Analysis </user_guide/00-introduction.ipynb>`
+  (:issue:`345`).
+- Fix broken links with nbsphinx 0.9.2 (:issue:`367`).
+
+Backwards incompatible changes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- The attribute ``event_times_`` of estimators has been replaced by ``unique_times_``
+  to clarify that these are all the unique times points, not just the once where
+  an event occurred (:issue:`371`).
+- Functions returned by `predict_cumulative_hazard_function` and `predict_survival_function`
+  of :class:`sksurv.tree.SurvivalTree`, :class:`sksurv.ensemble.RandomSurvivalForest`,
+  and :class:`sksurv.ensemble.ExtraSurvivalTrees` are over all unique time points
+  passed as training data, instead of all unique time points where events occurred
+  (:issue:`371`).
+- Evaluating a function returned by `predict_cumulative_hazard_function`
+  or `predict_survival_function` will no longer raise an exception if the
+  specified time point is smaller than the smallest time point observed
+  during training. Instead, the value at ``StepFunction.x[0]`` will be returned
+  (:issue:`375`).
+
+
+scikit-survival 0.20.0 (2023-03-05)
+-----------------------------------
+
+This release adds support for scikit-learn 1.2 and drops support for previous versions.
+
+Enhancements
+^^^^^^^^^^^^
+- Raise more informative error messages when a parameter does
+  not have a valid type/value (see
+  `sklearn#23462 <https://github.com/scikit-learn/scikit-learn/issues/23462>`_).
+- Add ``positive`` and ``random_state`` parameters to :class:`sksurv.linear_model.IPCRidge`.
+
+Documentation
+^^^^^^^^^^^^^
+- Update API docs based on scikit-learn 1.2 (where applicable).
+
+Backwards incompatible changes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- To align with the scikit-learn API, many parameters of estimators must be
+  provided with their names, as keyword arguments, instead of positional arguments.
+- Remove deprecated ``normalize`` parameter from :class:`sksurv.linear_model.IPCRidge`.
+- Remove deprecated ``X_idx_sorted`` argument from :meth:`sksurv.tree.SurvivalTree.fit`.
+- Setting ``kernel="polynomial"`` in :class:`sksurv.svm.FastKernelSurvivalSVM`,
+  :class:`sksurv.svm.HingeLossSurvivalSVM`, and :class:`sksurv.svm.MinlipSurvivalAnalysis`
+  has been replaced with ``kernel="poly"``.
+
+
 scikit-survival 0.19.0 (2022-10-23)
 -----------------------------------
 
@@ -110,7 +287,7 @@ Enhancements
 - Add support for ``feature_names_in_`` and ``n_features_in_``
   to all estimators and transforms.
 - Add :meth:`sksurv.preprocessing.OneHotEncoder.get_feature_names_out`.
-- Update bundeled version of Eigen to 3.3.9.
+- Update bundled version of Eigen to 3.3.9.
 
 Backwards incompatible changes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -124,7 +301,7 @@ Deprecations
 ^^^^^^^^^^^^
 - The ``normalize`` parameter of :class:`sksurv.linear_model.IPCRidge`
   is deprecated and will be removed in a future version. Instead, use
-  a sciki-learn pipeline:
+  a scikit-learn pipeline:
   ``make_pipeline(StandardScaler(with_mean=False), IPCRidge())``.
 
 
@@ -370,9 +547,9 @@ Bug fixes
   - :func:`sksurv.metrics.cumulative_dynamic_auc`
   - :func:`sksurv.metrics.concordance_index_ipcw`
 
-- Throw an exception when trying to estimate c-index from uncomparable data (#117).
+- Throw an exception when trying to estimate c-index from incomparable data (#117).
 - Estimators in ``sksurv.svm`` will now throw an
-  exception when trying to fit a model to data with uncomparable pairs.
+  exception when trying to fit a model to data with incomparable pairs.
 
 
 scikit-survival 0.12 (2020-04-15)

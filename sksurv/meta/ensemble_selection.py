@@ -17,6 +17,7 @@ import numpy as np
 from scipy.stats import kendalltau, rankdata, spearmanr
 from sklearn.base import BaseEstimator, clone
 from sklearn.model_selection import check_cv
+from sklearn.utils._param_validation import Interval, StrOptions
 
 from .base import _fit_and_score
 from .stacking import Stacking
@@ -39,8 +40,7 @@ class EnsembleAverage(BaseEstimator):
     def __init__(self, base_estimators, name=None):
         self.base_estimators = base_estimators
         self.name = name
-        assert not hasattr(self.base_estimators[0], "classes_"),\
-            "base estimator cannot be a classifier"
+        assert not hasattr(self.base_estimators[0], "classes_"), "base estimator cannot be a classifier"
 
     def get_base_params(self):
         return self.base_estimators[0].get_params()
@@ -76,8 +76,7 @@ class MeanRankEstimator(BaseEstimator):
 
 
 def _fit_and_score_fold(est, x, y, scorer, train_index, test_index, fit_params, idx, fold):
-    score = _fit_and_score(est, x, y, scorer, train_index, test_index,
-                           est.get_params(), fit_params, {})
+    score = _fit_and_score(est, x, y, scorer, train_index, test_index, est.get_params(), fit_params, {})
     return idx, fold, score, est
 
 
@@ -92,12 +91,36 @@ def _score_regressor(estimator, X, y, idx):
 
 
 class BaseEnsembleSelection(Stacking):
+    _parameter_constraints = {
+        **Stacking._parameter_constraints,
+        "scorer": [callable],
+        "n_estimators": [
+            Interval(numbers.Integral, 1, None, closed="left"),
+            Interval(numbers.Real, 0.0, 1.0, closed="right"),
+        ],
+        "min_score": [numbers.Real],
+        "correlation": [StrOptions({"pearson", "kendall", "spearman"})],
+        "min_correlation": [Interval(numbers.Real, -1, 1, closed="both")],
+        "cv": ["cv_object"],
+        "n_jobs": [Interval(numbers.Integral, 1, None, closed="left")],
+        "verbose": ["verbose"],
+    }
+    _parameter_constraints.pop("probabilities")
 
-    def __init__(self, meta_estimator, base_estimators, scorer=None, n_estimators=0.2,
-                 min_score=0.66, correlation="pearson", min_correlation=0.6,
-                 cv=None, n_jobs=1, verbose=0):
-        super().__init__(meta_estimator=meta_estimator,
-                         base_estimators=base_estimators)
+    def __init__(
+        self,
+        meta_estimator,
+        base_estimators,
+        scorer=None,
+        n_estimators=0.2,
+        min_score=0.66,
+        correlation="pearson",
+        min_correlation=0.6,
+        cv=None,
+        n_jobs=1,
+        verbose=0,
+    ):
+        super().__init__(meta_estimator=meta_estimator, base_estimators=base_estimators)
 
         self.scorer = scorer
         self.n_estimators = n_estimators
@@ -108,8 +131,7 @@ class BaseEnsembleSelection(Stacking):
         self.n_jobs = n_jobs
         self.verbose = verbose
 
-        self._extra_params.extend(["scorer", "n_estimators", "min_score", "min_correlation",
-                                   "cv", "n_jobs", "verbose"])
+        self._extra_params.extend(["scorer", "n_estimators", "min_score", "min_correlation", "cv", "n_jobs", "verbose"])
 
     def __len__(self):
         if hasattr(self, "fitted_models_"):
@@ -117,26 +139,18 @@ class BaseEnsembleSelection(Stacking):
         return 0
 
     def _check_params(self):
-        if self.n_estimators <= 0:
-            raise ValueError("n_estimators must not be zero or negative")
+        self._validate_params()
 
-        if self.n_estimators >= 1.0:
-            self.n_estimators = int(self.n_estimators)
-            if self.n_estimators > len(self.base_estimators):
-                raise ValueError(
-                    "n_estimators (%d) must not exceed number of base learners (%d)" % (self.n_estimators,
-                                                                                        len(self.base_estimators)))
+        if self.n_estimators > len(self.base_estimators):
+            raise ValueError(
+                f"n_estimators ({self.n_estimators}) must not exceed"
+                f" number of base learners ({len(self.base_estimators)})"
+            )
 
         if isinstance(self.n_estimators, numbers.Integral):
             self.n_estimators_ = self.n_estimators
         else:
             self.n_estimators_ = max(int(self.n_estimators * len(self.base_estimators)), 1)
-
-        if not callable(self.scorer):
-            raise TypeError("scorer is not callable")
-
-        if not -1. <= self.min_correlation <= 1:
-            raise ValueError("min_correlation must be in [-1; 1], but was %r" % self.min_correlation)
 
         if self.correlation == "pearson":
             self._corr_func = lambda x: np.corrcoef(x, rowvar=0)
@@ -144,9 +158,6 @@ class BaseEnsembleSelection(Stacking):
             self._corr_func = _corr_kendalltau
         elif self.correlation == "spearman":
             self._corr_func = lambda x: spearmanr(x, axis=0).correlation
-        else:
-            raise ValueError("correlation must be one of 'pearson', 'kendall', and 'spearman', "
-                             "but got %r" % self.correlation)
 
     def _create_base_ensemble(self, out, n_estimators, n_folds):
         """For each base estimator collect models trained on each fold"""
@@ -202,10 +213,11 @@ class BaseEnsembleSelection(Stacking):
         kernel_cache = {}
         kernel_fns = {}
         for i, (name, estimator) in enumerate(self.base_estimators):
-            if hasattr(estimator, 'kernel') and callable(estimator.kernel):
-                if not hasattr(estimator, '_get_kernel'):
+            if hasattr(estimator, "kernel") and callable(estimator.kernel):
+                if not hasattr(estimator, "_get_kernel"):
                     raise ValueError(
-                        'estimator %s uses a custom kernel function, but does not have a _get_kernel method' % name)
+                        f"estimator {name} uses a custom kernel function, but does not have a _get_kernel method"
+                    )
 
                 kernel_mat = kernel_fns.get(estimator.kernel, None)
                 if kernel_mat is None:
@@ -217,7 +229,7 @@ class BaseEnsembleSelection(Stacking):
 
                 # We precompute kernel, but only for training, for testing use original custom kernel function
                 kernel_estimator = clone(estimator)
-                kernel_estimator.set_params(kernel='precomputed')
+                kernel_estimator.set_params(kernel="precomputed")
                 base_estimators.append((name, kernel_estimator))
             else:
                 base_estimators.append((name, estimator))
@@ -230,10 +242,11 @@ class BaseEnsembleSelection(Stacking):
 
         for idx, fold, _, est in out:
             if idx in kernel_cache:
-                if not hasattr(est, 'fit_X_'):
+                if not hasattr(est, "fit_X_"):
                     raise ValueError(
-                        'estimator %s uses a custom kernel function, '
-                        'but does not have the attribute `fit_X_` after training' % self.base_estimators[idx][0])
+                        f"estimator {self.base_estimators[idx][0]} uses a custom kernel function, "
+                        "but does not have the attribute `fit_X_` after training"
+                    )
 
                 est.set_params(kernel=self.base_estimators[idx][1].kernel)
                 est.fit_X_ = X[train_folds[fold]]
@@ -249,18 +262,21 @@ class BaseEnsembleSelection(Stacking):
         # Take care of custom kernel functions
         base_estimators, kernel_cache = self._get_base_estimators(X)
 
-        out = Parallel(
-            n_jobs=self.n_jobs, verbose=self.verbose
-        )(
-            delayed(_fit_and_score_fold)(clone(estimator),
-                                         X if i not in kernel_cache else kernel_cache[i],
-                                         y,
-                                         self.scorer,
-                                         train_index, test_index,
-                                         fit_params_steps[name],
-                                         i, fold)
+        out = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
+            delayed(_fit_and_score_fold)(
+                clone(estimator),
+                X if i not in kernel_cache else kernel_cache[i],
+                y,
+                self.scorer,
+                train_index,
+                test_index,
+                fit_params_steps[name],
+                i,
+                fold,
+            )
             for i, (name, estimator) in enumerate(base_estimators)
-            for fold, (train_index, test_index) in enumerate(folds))
+            for fold, (train_index, test_index) in enumerate(folds)
+        )
 
         if len(kernel_cache) > 0:
             out = self._restore_base_estimators(kernel_cache, out, X, folds)
@@ -275,9 +291,7 @@ class BaseEnsembleSelection(Stacking):
         np.fill_diagonal(cor, 0)
 
         final_scores = scores.copy()
-        diversity = np.apply_along_axis(
-            lambda x: (n_models - np.sum(x >= self.min_correlation)) / n_models,
-            0, cor)
+        diversity = np.apply_along_axis(lambda x: (n_models - np.sum(x >= self.min_correlation)) / n_models, 0, cor)
 
         final_scores += diversity
         return final_scores
@@ -384,19 +398,36 @@ class EnsembleSelection(BaseEnsembleSelection):
         Lecture Notes in Computer Science, vol. 3181, 164-173, 2004
     """
 
-    def __init__(self, base_estimators, scorer=None, n_estimators=0.2,
-                 min_score=0.2, correlation="pearson", min_correlation=0.6,
-                 cv=None, n_jobs=1, verbose=0):
-        super().__init__(meta_estimator=MeanRankEstimator(),
-                         base_estimators=base_estimators,
-                         scorer=scorer,
-                         n_estimators=n_estimators,
-                         min_score=min_score,
-                         correlation=correlation,
-                         min_correlation=min_correlation,
-                         cv=cv,
-                         n_jobs=n_jobs,
-                         verbose=verbose)
+    _parameter_constraints = {
+        **BaseEnsembleSelection._parameter_constraints,
+    }
+    _parameter_constraints.pop("meta_estimator")
+
+    def __init__(
+        self,
+        base_estimators,
+        *,
+        scorer=None,
+        n_estimators=0.2,
+        min_score=0.2,
+        correlation="pearson",
+        min_correlation=0.6,
+        cv=None,
+        n_jobs=1,
+        verbose=0,
+    ):
+        super().__init__(
+            meta_estimator=MeanRankEstimator(),
+            base_estimators=base_estimators,
+            scorer=scorer,
+            n_estimators=n_estimators,
+            min_score=min_score,
+            correlation=correlation,
+            min_correlation=min_correlation,
+            cv=cv,
+            n_jobs=n_jobs,
+            verbose=verbose,
+        )
 
     def _fit(self, X, y, cv, **fit_params):
         scores, base_ensemble = self._fit_and_score_ensemble(X, y, cv, **fit_params)
@@ -420,8 +451,8 @@ class EnsembleSelection(BaseEnsembleSelection):
         n_models = len(self.fitted_models_)
 
         out = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
-            delayed(_predict)(est, X, i)
-            for i, est in enumerate(self.fitted_models_))
+            delayed(_predict)(est, X, i) for i, est in enumerate(self.fitted_models_)
+        )
 
         predictions = np.empty((X.shape[0], n_models), order="F")
         for i, p in out:
@@ -431,7 +462,7 @@ class EnsembleSelection(BaseEnsembleSelection):
             final_scores = self._add_diversity_score(self.scores_, predictions)
             sorted_idx = np.argsort(-final_scores, kind="mergesort")
 
-            selected_models = sorted_idx[:self.n_estimators_]
+            selected_models = sorted_idx[: self.n_estimators_]
             return predictions[:, selected_models]
 
         return predictions
@@ -521,19 +552,37 @@ class EnsembleSelectionRegressor(BaseEnsembleSelection):
         "Dynamic integration of regression models. International Workshop on Multiple Classifier Systems".
         Lecture Notes in Computer Science, vol. 3181, 164-173, 2004
     """
-    def __init__(self, base_estimators, scorer=None, n_estimators=0.2,
-                 min_score=0.66, correlation="pearson", min_correlation=0.6,
-                 cv=None, n_jobs=1, verbose=0):
-        super().__init__(meta_estimator=MeanEstimator(),
-                         base_estimators=base_estimators,
-                         scorer=scorer,
-                         n_estimators=n_estimators,
-                         min_score=min_score,
-                         correlation=correlation,
-                         min_correlation=min_correlation,
-                         cv=cv,
-                         n_jobs=n_jobs,
-                         verbose=verbose)
+
+    _parameter_constraints = {
+        **BaseEnsembleSelection._parameter_constraints,
+    }
+    _parameter_constraints.pop("meta_estimator")
+
+    def __init__(
+        self,
+        base_estimators,
+        *,
+        scorer=None,
+        n_estimators=0.2,
+        min_score=0.66,
+        correlation="pearson",
+        min_correlation=0.6,
+        cv=None,
+        n_jobs=1,
+        verbose=0,
+    ):
+        super().__init__(
+            meta_estimator=MeanEstimator(),
+            base_estimators=base_estimators,
+            scorer=scorer,
+            n_estimators=n_estimators,
+            min_score=min_score,
+            correlation=correlation,
+            min_correlation=min_correlation,
+            cv=cv,
+            n_jobs=n_jobs,
+            verbose=verbose,
+        )
 
     @property
     def _predict_risk_score(self):
@@ -565,8 +614,8 @@ class EnsembleSelectionRegressor(BaseEnsembleSelection):
         n_models = len(fitted_models)
 
         out = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
-            delayed(_score_regressor)(est, X, y, i)
-            for i, est in enumerate(fitted_models))
+            delayed(_score_regressor)(est, X, y, i) for i, est in enumerate(fitted_models)
+        )
 
         error = np.empty((X.shape[0], n_models), order="F")
         for i, err in out:
@@ -575,7 +624,7 @@ class EnsembleSelectionRegressor(BaseEnsembleSelection):
         final_scores = self._add_diversity_score(scores, error)
         sorted_idx = np.argsort(-final_scores, kind="mergesort")
 
-        selected_models = sorted_idx[:self.n_estimators_]
+        selected_models = sorted_idx[: self.n_estimators_]
 
         return fitted_models[selected_models], final_scores
 
@@ -583,8 +632,8 @@ class EnsembleSelectionRegressor(BaseEnsembleSelection):
         n_models = len(self.fitted_models_)
 
         out = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
-            delayed(_predict)(est, X, i)
-            for i, est in enumerate(self.fitted_models_))
+            delayed(_predict)(est, X, i) for i, est in enumerate(self.fitted_models_)
+        )
 
         predictions = np.empty((X.shape[0], n_models), order="F")
         for i, p in out:

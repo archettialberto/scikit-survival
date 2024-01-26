@@ -15,28 +15,34 @@ class StandardizeCase(FixtureParameterFactory):
 
     @property
     def expected(self):
-        return pd.DataFrame(np.array([
-            [-1.486301, -1.486301, -1.486301, -1.486301, -1.486301],
-            [-1.156012, -1.156012, -1.156012, -1.156012, -1.156012],
-            [-0.825723, -0.825723, -0.825723, -0.825723, -0.825723],
-            [-0.495434, -0.495434, -0.495434, -0.495434, -0.495434],
-            [-0.165145, -0.165145, -0.165145, -0.165145, -0.165145],
-            [0.165145, 0.165145, 0.165145, 0.165145, 0.165145],
-            [0.495434, 0.495434, 0.495434, 0.495434, 0.495434],
-            [0.825723, 0.825723, 0.825723, 0.825723, 0.825723],
-            [1.156012, 1.156012, 1.156012, 1.156012, 1.156012],
-            [1.486301, 1.486301, 1.486301, 1.486301, 1.486301]
-        ]))
+        return pd.DataFrame(
+            np.array(
+                [
+                    [-1.486301, -1.486301, -1.486301, -1.486301, -1.486301],
+                    [-1.156012, -1.156012, -1.156012, -1.156012, -1.156012],
+                    [-0.825723, -0.825723, -0.825723, -0.825723, -0.825723],
+                    [-0.495434, -0.495434, -0.495434, -0.495434, -0.495434],
+                    [-0.165145, -0.165145, -0.165145, -0.165145, -0.165145],
+                    [0.165145, 0.165145, 0.165145, 0.165145, 0.165145],
+                    [0.495434, 0.495434, 0.495434, 0.495434, 0.495434],
+                    [0.825723, 0.825723, 0.825723, 0.825723, 0.825723],
+                    [1.156012, 1.156012, 1.156012, 1.156012, 1.156012],
+                    [1.486301, 1.486301, 1.486301, 1.486301, 1.486301],
+                ]
+            )
+        )
 
     @property
     def non_numeric_data(self):
-        data = pd.DataFrame.from_dict({
-            'q1': ['no', 'no', 'yes', 'yes', 'no', 'no', None, 'yes', 'no', None],
-            'q2': ['maybe', 'no', 'yes', 'maybe', 'yes', 'no', None, 'maybe', 'no', 'yes'],
-            'q3': [1, 2, 1, 3, 1, 2, np.nan, np.nan, 3, 2]
-        })
+        data = pd.DataFrame.from_dict(
+            {
+                "q1": ["no", "no", "yes", "yes", "no", "no", None, "yes", "no", None],
+                "q2": ["maybe", "no", "yes", "maybe", "yes", "no", None, "maybe", "no", "yes"],
+                "q3": [1, 2, 1, 3, 1, 2, np.nan, np.nan, 3, 2],
+            }
+        )
 
-        data.loc[:, 'q3'] = data.loc[:, 'q3'].astype('category')
+        data.loc[:, "q3"] = data.loc[:, "q3"].astype("category")
         return data
 
     def data_numeric(self):
@@ -91,22 +97,12 @@ class CategoricalCases(FixtureParameterFactory):
 
     @property
     def mixed_data_frame(self):
-        a = np.r_[
-            np.repeat(["large"], 10),
-            np.repeat(["small"], 5),
-            np.repeat(["tiny"], 13),
-            np.repeat(["medium"], 3)]
-        b = np.r_[
-            np.repeat(["yes"], 8),
-            np.repeat(["no"], 23)]
+        a = np.r_[np.repeat(["large"], 10), np.repeat(["small"], 5), np.repeat(["tiny"], 13), np.repeat(["medium"], 3)]
+        b = np.r_[np.repeat(["yes"], 8), np.repeat(["no"], 23)]
 
         c = self._make_randn(len(a))
 
-        df = pd.DataFrame.from_dict({
-            "a_category": a,
-            "a_binary": b,
-            "a_number": c.copy()
-        })
+        df = pd.DataFrame.from_dict({"a_category": a, "a_binary": b, "a_number": c.copy()})
         return df
 
 
@@ -119,33 +115,33 @@ class EncodeCategoricalCases(CategoricalCases):
             np.repeat(["no"], 16),
         ]
         expected = np.r_[
-            np.repeat([1.], 5),
+            np.repeat([1.0], 5),
             np.repeat([np.nan], 10),
-            np.repeat([0.], 16),
+            np.repeat([0.0], 16),
         ]
         return inputs, expected
 
     def data_series_categorical(self):
-        input_series = pd.Series(pd.Categorical.from_codes(
-            [1, 1, 0, 2, 0, 1, 2, 1, 2, 0, 0, 1, 2, 2],
-            ["small", "medium", "large"],
-            ordered=False
-        ), name="a_series")
+        input_series = pd.Series(
+            pd.Categorical.from_codes(
+                [1, 1, 0, 2, 0, 1, 2, 1, 2, 0, 0, 1, 2, 2], ["small", "medium", "large"], ordered=False
+            ),
+            name="a_series",
+        )
 
-        expected_df = pd.DataFrame.from_dict({
-            "a_series=medium": np.array([1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0], dtype=float),
-            "a_series=large": np.array([0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1], dtype=float),
-        })
+        expected_df = pd.DataFrame.from_dict(
+            {
+                "a_series=medium": np.array([1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0], dtype=float),
+                "a_series=large": np.array([0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1], dtype=float),
+            }
+        )
 
         return input_series, {}, expected_df
 
     def data_case_1(self):
         input_df = self.mixed_data_frame
 
-        eb = np.r_[
-            np.repeat([1.], 8),
-            np.repeat([0.], 23)
-        ]
+        eb = np.r_[np.repeat([1.0], 8), np.repeat([0.0], 23)]
 
         a_tiny = np.zeros(31, dtype=float)
         a_tiny[15:28] = 1
@@ -156,13 +152,15 @@ class EncodeCategoricalCases(CategoricalCases):
         a_medium = np.zeros(31, dtype=float)
         a_medium[-3:] = 1
 
-        expected_df = pd.DataFrame.from_dict({
-            "a_category=medium": a_medium,
-            "a_category=small": a_small,
-            "a_category=tiny": a_tiny,
-            "a_binary=yes": eb,
-            "a_number": input_df.loc[:, "a_number"].values.copy()
-        })
+        expected_df = pd.DataFrame.from_dict(
+            {
+                "a_category=medium": a_medium,
+                "a_category=small": a_small,
+                "a_category=tiny": a_tiny,
+                "a_binary=yes": eb,
+                "a_number": input_df.loc[:, "a_number"].values.copy(),
+            }
+        )
 
         return input_df, {}, expected_df
 
@@ -176,7 +174,7 @@ class EncodeCategoricalCases(CategoricalCases):
         expected_df = pd.DataFrame(
             np.zeros((32, 3), dtype=float),
             index=index,
-            columns=["a_category=medium", "a_category=small", "a_category=tiny"]
+            columns=["a_category=medium", "a_category=small", "a_category=tiny"],
         )
         # tiny
         expected_df.iloc[16:29, 2] = 1
@@ -192,22 +190,22 @@ class EncodeCategoricalCases(CategoricalCases):
     def data_numeric(self):
         a = np.array([0, 1, 1, 0, 1, 0, 0, 1, 0, 1], dtype=object)
         b = np.array([1, 2, 1, 3, 2, 1, 3, 2, 3, 1], dtype=object)
-        c = np.array([1./128, 1./32, 1., 1./8, 1./32, 1., 1./128, 1./8, 1., 1./32], dtype=object)
+        c = np.array(
+            [1.0 / 128, 1.0 / 32, 1.0, 1.0 / 8, 1.0 / 32, 1.0, 1.0 / 128, 1.0 / 8, 1.0, 1.0 / 32], dtype=object
+        )
 
-        input_df = pd.DataFrame.from_dict({
-            "a_binary_int": a.copy(),
-            "a_three_int": b.copy(),
-            "a_four_float": c.copy()
-        })
+        input_df = pd.DataFrame.from_dict({"a_binary_int": a.copy(), "a_three_int": b.copy(), "a_four_float": c.copy()})
 
-        expected_df = pd.DataFrame({
-            "a_binary_int=1": a.astype(float),
-            "a_three_int=2": (b == 2).astype(float),
-            "a_three_int=3": (b == 3).astype(float),
-            "a_four_float={}".format(1. / 32): (c == 1. / 32).astype(float),
-            "a_four_float={}".format(1. / 8): (c == 1. / 8).astype(float),
-            "a_four_float={}".format(1.): (c == 1.).astype(float),
-        })
+        expected_df = pd.DataFrame(
+            {
+                "a_binary_int=1": a.astype(float),
+                "a_three_int=2": (b == 2).astype(float),
+                "a_three_int=3": (b == 3).astype(float),
+                f"a_four_float={1.0 / 32}": (c == 1.0 / 32).astype(float),
+                f"a_four_float={1.0 / 8}": (c == 1.0 / 8).astype(float),
+                f"a_four_float={1.0}": (c == 1.0).astype(float),
+            }
+        )
 
         return input_df, {}, expected_df
 
@@ -218,14 +216,14 @@ class EncodeCategoricalCases(CategoricalCases):
 
         input_df = pd.DataFrame({"a_binary": b, "a_number": c.copy()})
 
-        expected_df = pd.DataFrame.from_dict({'a_binary=yes': eb, 'a_number': c.copy()})
+        expected_df = pd.DataFrame.from_dict({"a_binary=yes": eb, "a_number": c.copy()})
 
         return input_df, {}, expected_df
 
     def data_drop_all_missing(self):
         b, eb = self.binary_with_missing
 
-        all_missing = np.repeat([None], len(b))
+        all_missing = pd.Series([np.nan] * len(b), dtype=object)
 
         input_df = pd.DataFrame({"a_binary": b, "bogus": all_missing})
 
@@ -236,7 +234,7 @@ class EncodeCategoricalCases(CategoricalCases):
     def data_retain_all_missing(self):
         input_df, _, expected_df = self.data_drop_all_missing()
         kwargs = {"allow_drop": False}
-        expected_df.loc[:, "bogus"] = None
+        expected_df.loc[:, "bogus"] = pd.Series([np.nan] * expected_df.shape[0], index=expected_df.index, dtype=object)
 
         return input_df, kwargs, expected_df
 
@@ -251,6 +249,10 @@ class EncodeCategoricalCases(CategoricalCases):
 
 
 @pytest.mark.parametrize("inputs,kwargs,expected_df", EncodeCategoricalCases().get_cases())
+@pytest.mark.filterwarnings(
+    "ignore:In a future version, the Index constructor will not infer numeric dtypes when "
+    "passed object-dtype sequences \\(matching Series behavior\\):FutureWarning"
+)  # deprecated in pandas 1.4.0
 def test_encode_categorical(inputs, kwargs, expected_df):
     actual_df = column.encode_categorical(inputs, **kwargs)
     tm.assert_frame_equal(actual_df.isnull(), expected_df.isnull())
@@ -267,15 +269,10 @@ def test_series_numeric():
 class CategoricalToNumeric(CategoricalCases):
     def data_categorical_series_to_numeric(self):
         input_series = pd.Series(
-            ["a", "a", "b", "b", "b", "c"],
-            name="Thr33",
-            index=["Alpha", "Beta", "Gamma", "Delta", "Eta", "Mu"]
+            ["a", "a", "b", "b", "b", "c"], name="Thr33", index=["Alpha", "Beta", "Gamma", "Delta", "Eta", "Mu"]
         )
         expected = pd.Series(
-            [0, 0, 1, 1, 1, 2],
-            name="Thr33",
-            index=["Alpha", "Beta", "Gamma", "Delta", "Eta", "Mu"],
-            dtype=np.int64
+            [0, 0, 1, 1, 1, 2], name="Thr33", index=["Alpha", "Beta", "Gamma", "Delta", "Eta", "Mu"], dtype=np.int64
         )
         return input_series, expected
 
@@ -283,29 +280,21 @@ class CategoricalToNumeric(CategoricalCases):
         input_series = pd.Series(
             [True, True, False, False, True, False, True],
             name="human",
-            index=["Alpha", "Beta", "Gamma", "Delta", "Eta", "Mu", "Zeta"]
+            index=["Alpha", "Beta", "Gamma", "Delta", "Eta", "Mu", "Zeta"],
         )
         expected = pd.Series(
             [1, 1, 0, 0, 1, 0, 1],
             name="human",
             index=["Alpha", "Beta", "Gamma", "Delta", "Eta", "Mu", "Zeta"],
-            dtype=np.int64
+            dtype=np.int64,
         )
         return input_series, expected
 
     def data_frame_to_numeric(self):
         input_df = self.mixed_data_frame
 
-        a_num = np.r_[
-            np.repeat([0], 10),
-            np.repeat([2], 5),
-            np.repeat([3], 13),
-            np.repeat([1], 3)
-        ].astype(np.int64)
-        b_num = np.r_[
-            np.repeat([1], 8),
-            np.repeat([0], 23)
-        ].astype(np.int64)
+        a_num = np.r_[np.repeat([0], 10), np.repeat([2], 5), np.repeat([3], 13), np.repeat([1], 3)].astype(np.int64)
+        b_num = np.r_[np.repeat([1], 8), np.repeat([0], 23)].astype(np.int64)
 
         expected = pd.DataFrame.from_dict({"a_category": a_num, "a_binary": b_num})
         expected.loc[:, "a_number"] = input_df.loc[:, "a_number"].values.copy()

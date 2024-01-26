@@ -16,10 +16,9 @@ import shutil
 import sys
 
 from packaging.version import Version
-from pkg_resources import parse_requirements as _parse_requirements
-from setuptools import Command, Extension, find_packages, setup
+from setuptools import Command, Extension, setup
 
-CYTHON_MIN_VERSION = Version('0.29')
+CYTHON_MIN_VERSION = Version("0.29")
 
 
 # adapted from bottleneck's setup.py
@@ -45,7 +44,10 @@ class clean(Command):
                 if ext == ".pyc" or ext == ".so":
                     self.delete_files.append(f)
 
-                if ext in (".c", ".cpp",):
+                if ext in (
+                    ".c",
+                    ".cpp",
+                ):
                     source_file = f.with_suffix(".pyx")
                     if source_file.exists():
                         self.delete_files.append(f)
@@ -64,34 +66,22 @@ class clean(Command):
             delete_file.unlink()
 
 
-def parse_requirements(filename):
-    with open(filename) as fin:
-        parsed_requirements = _parse_requirements(
-            fin)
-        requirements = [str(ir) for ir in parsed_requirements]
-    return requirements
-
-
-def get_long_description():
-    with open('README.rst', encoding="utf-8") as fp:
-        long_description = fp.read()
-    return long_description
-
-
 EXTENSIONS = {
-    "_binarytrees": {"sources": ["sksurv/bintrees/_binarytrees.pyx",
-                                 "sksurv/bintrees/binarytrees.cpp"],
-                     "language": "c++"},
+    "_binarytrees": {
+        "sources": ["sksurv/bintrees/_binarytrees.pyx", "sksurv/bintrees/binarytrees.cpp"],
+        "language": "c++",
+    },
     "_clinical_kernel": {"sources": ["sksurv/kernels/_clinical_kernel.pyx"]},
     "_coxph_loss": {"sources": ["sksurv/ensemble/_coxph_loss.pyx"]},
     "_prsvm": {"sources": ["sksurv/svm/_prsvm.pyx"]},
     "_minlip": {"sources": ["sksurv/svm/_minlip.pyx"]},
     "_criterion": {"sources": ["sksurv/tree/_criterion.pyx"]},
-    "_coxnet": {"sources": ["sksurv/linear_model/_coxnet.pyx"],
-                "language": "c++",
-                "include_dirs": ["sksurv/linear_model/src",
-                                 "sksurv/linear_model/src/eigen"],
-                "extra_compile_args": ["-std=c++14"]},
+    "_coxnet": {
+        "sources": ["sksurv/linear_model/_coxnet.pyx"],
+        "language": "c++",
+        "include_dirs": ["sksurv/linear_model/src", "sksurv/linear_model/src/eigen"],
+        "extra_compile_args": ["-std=c++14"],
+    },
 }
 
 
@@ -99,13 +89,13 @@ def get_module_from_sources(sources):
     for src_path in map(Path, sources):
         if src_path.suffix == ".pyx":
             return ".".join(src_path.parts[:-1] + (src_path.stem,))
-    raise ValueError("could not find module from sources: {!r}".format(sources))
+    raise ValueError(f"could not find module from sources: {sources!r}")
 
 
 def _check_cython_version():
-    message = ("Please install Cython with a version >= {0} in order "
-               "to build a scikit-learn from source.").format(
-                   CYTHON_MIN_VERSION)
+    message = (
+        f"Please install Cython with a version >= {CYTHON_MIN_VERSION} in order to build a scikit-learn from source."
+    )
     try:
         import Cython
     except ModuleNotFoundError:
@@ -113,8 +103,7 @@ def _check_cython_version():
         raise ModuleNotFoundError(message)
 
     if Version(Cython.__version__) < CYTHON_MIN_VERSION:
-        message += (" The current version of Cython is {} installed in {}."
-                    .format(Cython.__version__, Cython.__path__))
+        message += f" The current version of Cython is {Cython.__version__} installed in {Cython.__path__}."
         raise ValueError(message)
 
 
@@ -124,11 +113,11 @@ def cythonize_extensions(extensions):
     from Cython.Build import cythonize
 
     # http://docs.cython.org/en/latest/src/userguide/source_files_and_compilation.html#cythonize-arguments
-    directives = {'language_level': '3'}
-    cy_cov = os.environ.get('CYTHON_COVERAGE', False)
+    directives = {"language_level": "3"}
+    cy_cov = os.environ.get("CYTHON_COVERAGE", False)
     if cy_cov:
-        directives['linetrace'] = True
-        macros = [('CYTHON_TRACE', '1'), ('CYTHON_TRACE_NOGIL', '1')]
+        directives["linetrace"] = True
+        macros = [("CYTHON_TRACE", "1"), ("CYTHON_TRACE_NOGIL", "1")]
 
         for ext in extensions:
             if ext.define_macros is None:
@@ -136,15 +125,15 @@ def cythonize_extensions(extensions):
             else:
                 ext.define_macros += macros
 
-    return cythonize(extensions,
-                     compiler_directives=directives)
+    return cythonize(extensions, compiler_directives=directives)
 
 
 def _check_eigen_source():
     eigen_src = Path("sksurv/linear_model/src/eigen/Eigen")
     if not eigen_src.is_dir():
-        raise RuntimeError("{} directory not found. You might have to run "
-                           "'git submodule update --init'.".format(eigen_src.resolve()))
+        raise RuntimeError(
+            f"{eigen_src.resolve()} directory not found. You might have to run 'git submodule update --init'."
+        )
 
 
 def get_extensions():
@@ -177,46 +166,8 @@ def get_extensions():
     return extensions
 
 
-def setup_package():
+if __name__ == "__main__":
     setup(
-        name='scikit-survival',
-        url='https://github.com/sebp/scikit-survival',
-        project_urls={
-            "Bug Tracker": "https://github.com/sebp/scikit-survival/issues",
-            "Documentation": "https://scikit-survival.readthedocs.io",
-            "Source Code": "https://github.com/sebp/scikit-survival",
-        },
-        author='Sebastian Pölsterl',
-        author_email='sebp@k-d-w.org',
-        description='Survival analysis built on top of scikit-learn',
-        long_description=get_long_description(),
-        license="GPLv3+",
-        packages=find_packages(),
         ext_modules=get_extensions(),
-        classifiers=['Development Status :: 4 - Beta',
-                     'Intended Audience :: Science/Research',
-                     'Intended Audience :: Developers',
-                     'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',
-                     'Operating System :: MacOS',
-                     'Operating System :: Microsoft :: Windows',
-                     'Operating System :: POSIX',
-                     'Programming Language :: C++',
-                     'Programming Language :: Cython',
-                     'Programming Language :: Python',
-                     'Programming Language :: Python :: 3',
-                     'Programming Language :: Python :: 3.8',
-                     'Programming Language :: Python :: 3.9',
-                     'Programming Language :: Python :: 3.10',
-                     'Topic :: Software Development',
-                     'Topic :: Scientific/Engineering',
-                     ],
-        zip_safe=False,
-        package_data={"sksurv.datasets": ["data/*.arff"]},
-        python_requires='>=3.8',
-        install_requires=parse_requirements('requirements/prod.txt'),
         cmdclass={"clean": clean},
     )
-
-
-if __name__ == "__main__":
-    setup_package()

@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+import numbers
 import warnings
 
 import numpy as np
@@ -6,13 +7,14 @@ from scipy import linalg, sparse
 from sklearn.base import BaseEstimator
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.metrics.pairwise import pairwise_kernels
+from sklearn.utils._param_validation import Interval, StrOptions
 
 from ..base import SurvivalAnalysisMixin
 from ..exceptions import NoComparablePairException
 from ..util import check_array_survival
 from ._minlip import create_difference_matrix
 
-__all__ = ['MinlipSurvivalAnalysis', 'HingeLossSurvivalSVM']
+__all__ = ["MinlipSurvivalAnalysis", "HingeLossSurvivalSVM"]
 
 
 class QPSolver(metaclass=ABCMeta):
@@ -22,6 +24,7 @@ class QPSolver(metaclass=ABCMeta):
         minimize    (1/2)*x'*P*x + q'*x
         subject to  G*x <= h
     """
+
     @abstractmethod
     def __init__(self, max_iter, verbose):
         self.max_iter = max_iter
@@ -50,13 +53,14 @@ class OsqpSolver(QPSolver):
         results = m.solve()
 
         if results.info.status_val == -2:  # max iter reached
-            warnings.warn(("OSQP solver did not converge: {}".format(
-                results.info.status)),
+            warnings.warn(
+                (f"OSQP solver did not converge: {results.info.status}"),
                 category=ConvergenceWarning,
-                stacklevel=2)
+                stacklevel=2,
+            )
         elif results.info.status_val not in (1, 2):  # pragma: no cover
             # non of solved, solved inaccurate
-            raise RuntimeError("OSQP solver failed: {}".format(results.info.status))
+            raise RuntimeError(f"OSQP solver failed: {results.info.status}")
 
         n_iter = results.info.iter
         return results.x[np.newaxis], n_iter
@@ -110,27 +114,27 @@ class EcosSolver(QPSolver):
         c[0] = 0.5 * max_eigval
 
         zerorow = np.zeros((1, L.shape[1]))
-        G_quad = np.block([
-            [-1, zerorow],
-            [1, zerorow],
-            [np.zeros((L.shape[0], 1)), -2 * L],
-        ])
+        G_quad = np.block(
+            [
+                [-1, zerorow],
+                [1, zerorow],
+                [np.zeros((L.shape[0], 1)), -2 * L],
+            ]
+        )
         G_lin = sparse.hstack((sparse.csc_matrix((G.shape[0], 1)), G))
         G_all = sparse.vstack((G_lin, sparse.csc_matrix(G_quad)), format="csc")
 
         n_constraints = G.shape[0]
         h_all = np.empty(G_all.shape[0])
         h_all[:n_constraints] = h
-        h_all[n_constraints:(n_constraints + 2)] = 1
-        h_all[(n_constraints + 2):] = 0
+        h_all[n_constraints : (n_constraints + 2)] = 1
+        h_all[(n_constraints + 2) :] = 0
 
         dims = {
             "l": G.shape[0],  # scalar, dimension of positive orthant
-            "q": [G_quad.shape[0]]  # vector with dimensions of second order cones
+            "q": [G_quad.shape[0]],  # vector with dimensions of second order cones
         }
-        results = ecos.solve(
-            c, G_all, h_all, dims, verbose=self.verbose, max_iters=self.max_iter or 1000
-        )
+        results = ecos.solve(c, G_all, h_all, dims, verbose=self.verbose, max_iters=self.max_iter or 1000)
         self._check_success(results)
 
         # drop solution for t
@@ -140,21 +144,19 @@ class EcosSolver(QPSolver):
 
     def _check_success(self, results):  # pylint: disable=no-self-use
         exit_flag = results["info"]["exitFlag"]
-        if exit_flag in (EcosSolver.EXIT_OPTIMAL,
-                         EcosSolver.EXIT_OPTIMAL + EcosSolver.EXIT_INACC_OFFSET):
+        if exit_flag in (EcosSolver.EXIT_OPTIMAL, EcosSolver.EXIT_OPTIMAL + EcosSolver.EXIT_INACC_OFFSET):
             return
 
         if exit_flag == EcosSolver.EXIT_MAXIT:
             warnings.warn(
-                "ECOS solver did not converge: maximum iterations reached",
-                category=ConvergenceWarning,
-                stacklevel=3)
+                "ECOS solver did not converge: maximum iterations reached", category=ConvergenceWarning, stacklevel=3
+            )
         elif exit_flag == EcosSolver.EXIT_PINF:  # pragma: no cover
             raise RuntimeError("Certificate of primal infeasibility found")
         elif exit_flag == EcosSolver.EXIT_DINF:  # pragma: no cover
             raise RuntimeError("Certificate of dual infeasibility found")
         else:  # pragma: no cover
-            raise RuntimeError("Unknown problem in ECOS solver, exit status: {}".format(exit_flag))
+            raise RuntimeError(f"Unknown problem in ECOS solver, exit status: {exit_flag}")
 
     def _decompose(self, P):
         # from scipy.linalg.pinvh
@@ -166,10 +168,10 @@ class EcosSolver(QPSolver):
             t = u.dtype
             cond = largest_eigenvalue * max(P.shape) * np.finfo(t).eps
 
-        not_below_cutoff = (abs(s) > -cond)
-        assert not_below_cutoff.all(), "matrix has negative eigenvalues: {}".format(s.min())
+        not_below_cutoff = abs(s) > -cond
+        assert not_below_cutoff.all(), f"matrix has negative eigenvalues: {s.min()}"
 
-        above_cutoff = (abs(s) > cond)
+        above_cutoff = abs(s) > cond
         u = u[:, above_cutoff]
         s = s[above_cutoff]
 
@@ -199,31 +201,44 @@ class MinlipSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
 
     Parameters
     ----------
-    solver : "ecos" | "osqp", optional, default: ecos
-        Which quadratic program solver to use.
-
     alpha : float, positive, default: 1
         Weight of penalizing the hinge loss in the objective function.
 
-    kernel : "linear" | "poly" | "rbf" | "sigmoid" | "cosine" | "precomputed"
-        Kernel.
-        Default: "linear"
+    solver : {'ecos', 'osqp'}, optional, default: 'ecos'
+        Which quadratic program solver to use.
 
-    gamma : float, optional
-        Kernel coefficient for rbf and poly kernels. Default: ``1/n_features``.
+    kernel : {'linear', 'poly', 'rbf', 'sigmoid', 'cosine', 'precomputed'} or callable, default: 'linear'.
+        Kernel mapping used internally. This parameter is directly passed to
+        :func:`sklearn.metrics.pairwise.pairwise_kernels`.
+        If `kernel` is a string, it must be one of the metrics
+        in `sklearn.pairwise.PAIRWISE_KERNEL_FUNCTIONS` or "precomputed".
+        If `kernel` is "precomputed", X is assumed to be a kernel matrix.
+        Alternatively, if `kernel` is a callable function, it is called on
+        each pair of instances (rows) and the resulting value recorded. The
+        callable should take two rows from X as input and return the
+        corresponding kernel value as a single number. This means that
+        callables from :mod:`sklearn.metrics.pairwise` are not allowed, as
+        they operate on matrices, not single samples. Use the string
+        identifying the kernel instead.
+
+    gamma : float, optional, default: None
+        Gamma parameter for the RBF, laplacian, polynomial, exponential chi2
+        and sigmoid kernels. Interpretation of the default value is left to
+        the kernel; see the documentation for :mod:`sklearn.metrics.pairwise`.
         Ignored by other kernels.
 
     degree : int, default: 3
-        Degree for poly kernels. Ignored by other kernels.
+        Degree of the polynomial kernel. Ignored by other kernels.
 
     coef0 : float, optional
-        Independent term in poly and sigmoid kernels.
+        Zero coefficient for polynomial and sigmoid kernels.
         Ignored by other kernels.
 
     kernel_params : mapping of string to any, optional
-        Parameters (keyword arguments) and values for kernel passed as call
+        Additional parameters (keyword arguments) for kernel function passed
+        as callable object.
 
-    pairs : "all" | "nearest" | "next", optional, default: "nearest"
+    pairs : {'all', 'nearest', 'next'}, optional, default: 'nearest'
         Which constraints to use in the optimization problem.
 
         - all: Use all comparable pairs. Scales quadratic in number of samples
@@ -235,14 +250,14 @@ class MinlipSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
           disregarding its censoring status. Scales linear in number of samples.
 
     verbose : bool, default: False
-        Enable verbose output of solver
+        Enable verbose output of solver.
 
-    timeit : False or int
+    timeit : False, int or None, default: None
         If non-zero value is provided the time it takes for optimization is measured.
         The given number of repetitions are performed. Results can be accessed from the
         ``timings_`` attribute.
 
-    max_iter : int, optional
+    max_iter : int or None, optional, default: None
         Maximum number of iterations to perform. By default
         use solver's default value.
 
@@ -271,9 +286,38 @@ class MinlipSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
            The Journal of Machine Learning Research, 12, 819-862. 2011
     """
 
-    def __init__(self, solver="ecos",
-                 alpha=1.0, kernel="linear", gamma=None, degree=3, coef0=1, kernel_params=None,
-                 pairs="nearest", verbose=False, timeit=None, max_iter=None):
+    _parameter_constraints = {
+        "solver": [StrOptions({"ecos", "osqp"})],
+        "alpha": [Interval(numbers.Real, 0, None, closed="neither")],
+        "kernel": [
+            StrOptions({"linear", "poly", "rbf", "sigmoid", "precomputed"}),
+            callable,
+        ],
+        "degree": [Interval(numbers.Integral, 0, None, closed="left")],
+        "gamma": [Interval(numbers.Real, 0.0, None, closed="left"), None],
+        "coef0": [Interval(numbers.Real, None, None, closed="neither")],
+        "kernel_params": [dict, None],
+        "pairs": [StrOptions({"all", "nearest", "next"})],
+        "verbose": ["boolean"],
+        "timeit": [Interval(numbers.Integral, 1, None, closed="left"), None],
+        "max_iter": [Interval(numbers.Integral, 1, None, closed="left"), None],
+    }
+
+    def __init__(
+        self,
+        alpha=1.0,
+        *,
+        solver="ecos",
+        kernel="linear",
+        gamma=None,
+        degree=3,
+        coef0=1,
+        kernel_params=None,
+        pairs="nearest",
+        verbose=False,
+        timeit=None,
+        max_iter=None,
+    ):
         self.solver = solver
         self.alpha = alpha
         self.kernel = kernel
@@ -294,11 +338,8 @@ class MinlipSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         if callable(self.kernel):
             params = self.kernel_params or {}
         else:
-            params = {"gamma": self.gamma,
-                      "degree": self.degree,
-                      "coef0": self.coef0}
-        return pairwise_kernels(X, Y, metric=self.kernel,
-                                filter_params=True, **params)
+            params = {"gamma": self.gamma, "degree": self.degree, "coef0": self.coef0}
+        return pairwise_kernels(X, Y, metric=self.kernel, filter_params=True, **params)
 
     def _setup_qp(self, K, D, time):
         n_pairs = D.shape[0]
@@ -306,16 +347,17 @@ class MinlipSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         q = -D.dot(time)
 
         Dt = D.T.astype(P.dtype)  # cast constraints to correct type
-        G = sparse.vstack((
-            Dt,  # upper bound
-            - Dt,  # lower bound
-            - sparse.eye(n_pairs, dtype=P.dtype),  # lower bound >= 0
-        ),
-            format="csc"
+        G = sparse.vstack(
+            (
+                Dt,  # upper bound
+                -Dt,  # lower bound
+                -sparse.eye(n_pairs, dtype=P.dtype),  # lower bound >= 0
+            ),
+            format="csc",
         )
         n_constraints = Dt.shape[0]
         h = np.empty(G.shape[0], dtype=float)
-        h[:2 * n_constraints] = self.alpha
+        h[: 2 * n_constraints] = self.alpha
         h[-n_pairs:] = 0.0
 
         return {"P": P, "q": q, "G": G, "h": h}
@@ -326,14 +368,10 @@ class MinlipSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
             raise NoComparablePairException("Data has no comparable pairs, cannot fit model.")
 
         max_iter = self.max_iter
-        if max_iter is not None:
-            max_iter = int(max_iter)
         if self.solver == "ecos":
             solver = EcosSolver(max_iter=max_iter, verbose=self.verbose)
         elif self.solver == "osqp":
             solver = OsqpSolver(max_iter=max_iter, verbose=self.verbose)
-        else:
-            raise ValueError("unknown solver: {}".format(self.solver))
 
         K = self._get_kernel(x)
         problem_data = self._setup_qp(K, D, time)
@@ -372,6 +410,7 @@ class MinlipSurvivalAnalysis(BaseEstimator, SurvivalAnalysisMixin):
         -------
         self
         """
+        self._validate_params()
         X = self._validate_data(X, ensure_min_samples=2)
         event, time = check_array_survival(X, y)
         self._fit(X, event, time)
@@ -405,7 +444,7 @@ class HingeLossSurvivalSVM(MinlipSurvivalAnalysis):
 
     A new set of samples is created by building the difference between any two feature
     vectors in the original data, thus this version requires :math:`O(\\text{n_samples}^4)` space and
-    :math:`O(\\text{n_samples}^6 \\cdot \\text{n_features})`.
+    :math:`O(\\text{n_samples}^6 \\cdot \\text{n_features})` time.
 
     See :class:`sksurv.svm.NaiveSurvivalSVM` for the linear naive survival SVM based on liblinear.
 
@@ -425,49 +464,62 @@ class HingeLossSurvivalSVM(MinlipSurvivalAnalysis):
 
     Parameters
     ----------
-    solver : "ecos" | "osqp", optional, default: ecos
-        Which quadratic program solver to use.
-
     alpha : float, positive, default: 1
         Weight of penalizing the hinge loss in the objective function.
 
-    kernel : "linear" | "poly" | "rbf" | "sigmoid" | "cosine" | "precomputed"
-        Kernel.
-        Default: "linear"
+    solver : {'ecos', 'osqp'}, optional, default: 'ecos'
+        Which quadratic program solver to use.
 
-    gamma : float, optional
-        Kernel coefficient for rbf and poly kernels. Default: ``1/n_features``.
+    kernel : {'linear', 'poly', 'rbf', 'sigmoid', 'cosine', 'precomputed'} or callable, default: 'linear'.
+        Kernel mapping used internally. This parameter is directly passed to
+        :func:`sklearn.metrics.pairwise.pairwise_kernels`.
+        If `kernel` is a string, it must be one of the metrics
+        in `sklearn.pairwise.PAIRWISE_KERNEL_FUNCTIONS` or "precomputed".
+        If `kernel` is "precomputed", X is assumed to be a kernel matrix.
+        Alternatively, if `kernel` is a callable function, it is called on
+        each pair of instances (rows) and the resulting value recorded. The
+        callable should take two rows from X as input and return the
+        corresponding kernel value as a single number. This means that
+        callables from :mod:`sklearn.metrics.pairwise` are not allowed, as
+        they operate on matrices, not single samples. Use the string
+        identifying the kernel instead.
+
+    gamma : float, optional, default: None
+        Gamma parameter for the RBF, laplacian, polynomial, exponential chi2
+        and sigmoid kernels. Interpretation of the default value is left to
+        the kernel; see the documentation for :mod:`sklearn.metrics.pairwise`.
         Ignored by other kernels.
 
     degree : int, default: 3
-        Degree for poly kernels. Ignored by other kernels.
+        Degree of the polynomial kernel. Ignored by other kernels.
 
     coef0 : float, optional
-        Independent term in poly and sigmoid kernels.
+        Zero coefficient for polynomial and sigmoid kernels.
         Ignored by other kernels.
 
     kernel_params : mapping of string to any, optional
-        Parameters (keyword arguments) and values for kernel passed as call
+        Additional parameters (keyword arguments) for kernel function passed
+        as callable object.
 
-    pairs : "all" | "nearest" | "next", optional, default: "all"
+    pairs : {'all', 'nearest', 'next'}, optional, default: 'all'
         Which constraints to use in the optimization problem.
 
         - all: Use all comparable pairs. Scales quadratic in number of samples.
         - nearest: Only considers comparable pairs :math:`(i, j)` where :math:`j` is the
           uncensored sample with highest survival time smaller than :math:`y_i`.
-          Scales linear in number of samples (cf. :class:`sksurv.svm.MinlipSurvivalSVM`).
+          Scales linear in number of samples (cf. :class:`sksurv.svm.MinlipSurvivalAnalysis`).
         - next: Only compare against direct nearest neighbor according to observed time,
           disregarding its censoring status. Scales linear in number of samples.
 
     verbose : bool, default: False
         Enable verbose output of solver.
 
-    timeit : False or int
+    timeit : False, int or None, default: None
         If non-zero value is provided the time it takes for optimization is measured.
         The given number of repetitions are performed. Results can be accessed from the
         ``timings_`` attribute.
 
-    max_iter : int, optional
+    max_iter : int or None, optional, default: None
         Maximum number of iterations to perform. By default
         use solver's default value.
 
@@ -505,11 +557,36 @@ class HingeLossSurvivalSVM(MinlipSurvivalAnalysis):
            89-94, 2008.
     """
 
-    def __init__(self, solver="ecos",
-                 alpha=1.0, kernel="linear", gamma=None, degree=3, coef0=1, kernel_params=None,
-                 pairs="all", verbose=False, timeit=None, max_iter=None):
-        super().__init__(solver=solver, alpha=alpha, kernel=kernel, gamma=gamma, degree=degree, coef0=coef0,
-                         kernel_params=kernel_params, pairs=pairs, verbose=verbose, timeit=timeit, max_iter=max_iter)
+    _parameter_constraints = MinlipSurvivalAnalysis._parameter_constraints
+
+    def __init__(
+        self,
+        alpha=1.0,
+        *,
+        solver="ecos",
+        kernel="linear",
+        gamma=None,
+        degree=3,
+        coef0=1,
+        kernel_params=None,
+        pairs="all",
+        verbose=False,
+        timeit=None,
+        max_iter=None,
+    ):
+        super().__init__(
+            solver=solver,
+            alpha=alpha,
+            kernel=kernel,
+            gamma=gamma,
+            degree=degree,
+            coef0=coef0,
+            kernel_params=kernel_params,
+            pairs=pairs,
+            verbose=verbose,
+            timeit=timeit,
+            max_iter=max_iter,
+        )
 
     def _setup_qp(self, K, D, time):
         n_pairs = D.shape[0]
@@ -517,11 +594,7 @@ class HingeLossSurvivalSVM(MinlipSurvivalAnalysis):
         P = D.dot(D.dot(K).T).T
         q = -np.ones(n_pairs)
 
-        G = sparse.vstack((
-            -sparse.eye(n_pairs),
-            sparse.eye(n_pairs)),
-            format="csc"
-        )
+        G = sparse.vstack((-sparse.eye(n_pairs), sparse.eye(n_pairs)), format="csc")
         h = np.empty(2 * n_pairs)
         h[:n_pairs] = 0
         h[n_pairs:] = self.alpha

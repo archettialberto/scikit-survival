@@ -1,41 +1,31 @@
-import importlib
+from importlib.metadata import PackageNotFoundError, version
 import platform
 import sys
 
-from pkg_resources import DistributionNotFound, get_distribution
 from sklearn.pipeline import Pipeline, _final_estimator_has
 from sklearn.utils.metaestimators import available_if
+
+from .util import property_available_if
 
 
 def _get_version(name):
     try:
-        module = importlib.import_module(name)
+        pkg_version = version(name)
     except ImportError:
-        return None
-
-    if name == "osqp":
-        version = module.OSQP().version()
-    else:
-        version = getattr(module, "__version__", None)
-
-    if version is None:  # pragma: no cover
-        raise ImportError("Can't determine version for {}".format(
-            module.__name__))
-    return version
+        pkg_version = None
+    return pkg_version
 
 
 def show_versions():
     sys_info = {
         "Platform": platform.platform(),
-        "Python version": "{} {}".format(
-            platform.python_implementation(),
-            platform.python_version()),
+        "Python version": f"{platform.python_implementation()} {platform}",
         "Python interpreter": sys.executable,
     }
 
     deps = [
-        "sksurv",
-        "sklearn",
+        "scikit-survival",
+        "scikit-learn",
         "numpy",
         "scipy",
         "pandas",
@@ -58,17 +48,17 @@ def show_versions():
 
     print("SYSTEM")
     print("------")
-    for name, version in sys_info.items():
-        print(fmt.format(name, version))
+    for name, version_string in sys_info.items():
+        print(fmt.format(name, version_string))
 
     print("\nDEPENDENCIES")
     print("------------")
     for dep in deps:
-        version = _get_version(dep)
-        print(fmt.format(dep, version))
+        version_string = _get_version(dep)
+        print(fmt.format(dep, version_string))
 
 
-@available_if(_final_estimator_has('predict_cumulative_hazard_function'))
+@available_if(_final_estimator_has("predict_cumulative_hazard_function"))
 def predict_cumulative_hazard_function(self, X, **kwargs):
     """Predict cumulative hazard function.
 
@@ -98,7 +88,7 @@ def predict_cumulative_hazard_function(self, X, **kwargs):
     return self.steps[-1][-1].predict_cumulative_hazard_function(Xt, **kwargs)
 
 
-@available_if(_final_estimator_has('predict_survival_function'))
+@available_if(_final_estimator_has("predict_survival_function"))
 def predict_survival_function(self, X, **kwargs):
     """Predict survival function.
 
@@ -128,15 +118,21 @@ def predict_survival_function(self, X, **kwargs):
     return self.steps[-1][-1].predict_survival_function(Xt, **kwargs)
 
 
+@property_available_if(_final_estimator_has("_predict_risk_score"))
+def _predict_risk_score(self):
+    return self.steps[-1][-1]._predict_risk_score
+
+
 def patch_pipeline():
     Pipeline.predict_survival_function = predict_survival_function
     Pipeline.predict_cumulative_hazard_function = predict_cumulative_hazard_function
+    Pipeline._predict_risk_score = _predict_risk_score
 
 
 try:
-    __version__ = get_distribution('scikit-survival').version
-except DistributionNotFound:  # pragma: no cover
+    __version__ = version("scikit-survival")
+except PackageNotFoundError:  # pragma: no cover
     # package is not installed
-    __version__ = 'unknown'
+    __version__ = "unknown"
 
 patch_pipeline()

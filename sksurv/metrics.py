@@ -21,23 +21,21 @@ from .nonparametric import CensoringDistributionEstimator, SurvivalFunctionEstim
 from .util import check_y_survival
 
 __all__ = [
-    'as_concordance_index_ipcw_scorer',
-    'as_cumulative_dynamic_auc_scorer',
-    'as_integrated_brier_score_scorer',
-    'brier_score',
-    'concordance_index_censored',
-    'concordance_index_ipcw',
-    'cumulative_dynamic_auc',
-    'integrated_brier_score',
+    "as_concordance_index_ipcw_scorer",
+    "as_cumulative_dynamic_auc_scorer",
+    "as_integrated_brier_score_scorer",
+    "brier_score",
+    "concordance_index_censored",
+    "concordance_index_ipcw",
+    "cumulative_dynamic_auc",
+    "integrated_brier_score",
 ]
 
 
 def _check_estimate_1d(estimate, test_time):
     estimate = check_array(estimate, ensure_2d=False, input_name="estimate")
     if estimate.ndim != 1:
-        raise ValueError(
-            'Expected 1D array, got {:d}D array instead:\narray={}.\n'.format(
-                estimate.ndim, estimate))
+        raise ValueError(f"Expected 1D array, got {estimate.ndim}D array instead:\narray={estimate}.\n")
     check_consistent_length(test_time, estimate)
     return estimate
 
@@ -50,8 +48,8 @@ def _check_inputs(event_indicator, event_time, estimate):
 
     if not np.issubdtype(event_indicator.dtype, np.bool_):
         raise ValueError(
-            'only boolean arrays are supported as class labels for survival analysis, got {0}'.format(
-                event_indicator.dtype))
+            f"only boolean arrays are supported as class labels for survival analysis, got {event_indicator.dtype}"
+        )
 
     if len(event_time) < 2:
         raise ValueError("Need a minimum of two samples")
@@ -63,13 +61,13 @@ def _check_inputs(event_indicator, event_time, estimate):
 
 
 def _check_times(test_time, times):
-    times = check_array(np.atleast_1d(times), ensure_2d=False, dtype=test_time.dtype, input_name="times")
+    times = check_array(np.atleast_1d(times), ensure_2d=False, input_name="times")
     times = np.unique(times)
 
     if times.max() >= test_time.max() or times.min() < test_time.min():
         raise ValueError(
-            'all times must be within follow-up time of test data: [{}; {}['.format(
-                test_time.min(), test_time.max()))
+            f"all times must be within follow-up time of test data: [{test_time.min()}; {test_time.max()}["
+        )
 
     return times
 
@@ -80,21 +78,18 @@ def _check_estimate_2d(estimate, test_time, time_points, estimator):
     check_consistent_length(test_time, estimate)
 
     if estimate.ndim == 2 and estimate.shape[1] != time_points.shape[0]:
-        raise ValueError("expected estimate with {} columns, but got {}".format(
-            time_points.shape[0], estimate.shape[1]))
+        raise ValueError(f"expected estimate with {time_points.shape[0]} columns, but got {estimate.shape[1]}")
 
     return estimate, time_points
 
 
-def _get_comparable(event_indicator, event_time, order):
+def _iter_comparable(event_indicator, event_time, order):
     n_samples = len(event_time)
     tied_time = 0
-    comparable = {}
     i = 0
     while i < n_samples - 1:
         time_i = event_time[order[i]]
-        start = i + 1
-        end = start
+        end = i + 1
         while end < n_samples and event_time[order[end]] == time_i:
             end += 1
 
@@ -107,35 +102,29 @@ def _get_comparable(event_indicator, event_time, order):
                 mask[end:] = True
                 # an event is comparable to censored samples at same time point
                 mask[i:end] = censored_at_same_time
-                comparable[j] = mask
                 tied_time += censored_at_same_time.sum()
+                yield (j, mask, tied_time)
         i = end
-
-    return comparable, tied_time
 
 
 def _estimate_concordance_index(event_indicator, event_time, estimate, weights, tied_tol=1e-8):
     order = np.argsort(event_time)
 
-    comparable, tied_time = _get_comparable(event_indicator, event_time, order)
-
-    if len(comparable) == 0:
-        raise NoComparablePairException(
-            "Data has no comparable pairs, cannot estimate concordance index.")
+    tied_time = None
 
     concordant = 0
     discordant = 0
     tied_risk = 0
     numerator = 0.0
     denominator = 0.0
-    for ind, mask in comparable.items():
+    for ind, mask, tied_time in _iter_comparable(event_indicator, event_time, order):
         est_i = estimate[order[ind]]
         event_i = event_indicator[order[ind]]
         w_i = weights[order[ind]]
 
         est = estimate[order[mask]]
 
-        assert event_i, 'got censored sample at index %d, but expected uncensored' % order[ind]
+        assert event_i, f"got censored sample at index {order[ind]}, but expected uncensored"
 
         ties = np.absolute(est - est_i) <= tied_tol
         n_ties = ties.sum()
@@ -149,6 +138,9 @@ def _estimate_concordance_index(event_indicator, event_time, estimate, weights, 
         tied_risk += n_ties
         concordant += n_con
         discordant += est.size - n_con - n_ties
+
+    if tied_time is None:
+        raise NoComparablePairException("Data has no comparable pairs, cannot estimate concordance index.")
 
     cindex = numerator / denominator
     return cindex, concordant, discordant, tied_risk, tied_time
@@ -219,8 +211,7 @@ def concordance_index_censored(event_indicator, event_time, estimate, tied_tol=1
            evaluating assumptions and adequacy, and measuring and reducing errors",
            Statistics in Medicine, 15(4), 361-87, 1996.
     """
-    event_indicator, event_time, estimate = _check_inputs(
-        event_indicator, event_time, estimate)
+    event_indicator, event_time, estimate = _check_inputs(event_indicator, event_time, estimate)
 
     w = np.ones_like(estimate)
 
@@ -453,9 +444,7 @@ def cumulative_dynamic_auc(survival_train, survival_test, estimate, times, tied_
            Statistical Methods in Medical Research, 2014.
     """
     test_event, test_time = check_y_survival(survival_test)
-    estimate, times = _check_estimate_2d(
-        estimate, test_time, times, estimator="cumulative_dynamic_auc"
-    )
+    estimate, times = _check_estimate_2d(estimate, test_time, times, estimator="cumulative_dynamic_auc")
 
     n_samples = estimate.shape[0]
     n_times = times.shape[0]
@@ -556,9 +545,12 @@ def brier_score(survival_train, survival_test, estimate, times):
         second field.
 
     estimate : array-like, shape = (n_samples, n_times)
-        Estimated risk of experiencing an event for test data at `times`.
-        The i-th column must contain the estimated probability of
-        remaining event-free up to the i-th time point.
+        Estimated probability of remaining event-free at time points
+        specified by `times`. The value of ``estimate[i]`` must correspond to
+        the estimated probability of remaining event-free up to the time point
+        ``times[i]``. Typically, estimated probabilities are obtained via the
+        survival function returned by an estimator's
+        ``predict_survival_function`` method.
 
     times : array-like, shape = (n_times,)
         The time points for which to estimate the Brier score.
@@ -614,9 +606,7 @@ def brier_score(survival_train, survival_test, estimate, times):
            Statistics in Medicine, vol. 18, no. 17-18, pp. 2529–2545, 1999.
     """
     test_event, test_time = check_y_survival(survival_test)
-    estimate, times = _check_estimate_2d(
-        estimate, test_time, times, estimator="brier_score"
-    )
+    estimate, times = _check_estimate_2d(estimate, test_time, times, estimator="brier_score")
     if estimate.ndim == 1 and times.shape[0] == 1:
         estimate = estimate.reshape(-1, 1)
 
@@ -677,9 +667,12 @@ def integrated_brier_score(survival_train, survival_test, estimate, times):
         second field.
 
     estimate : array-like, shape = (n_samples, n_times)
-        Estimated risk of experiencing an event for test data at `times`.
-        The i-th column must contain the estimated probability of
-        remaining event-free up to the i-th time point.
+        Estimated probability of remaining event-free at time points
+        specified by `times`. The value of ``estimate[i]`` must correspond to
+        the estimated probability of remaining event-free up to the time point
+        ``times[i]``. Typically, estimated probabilities are obtained via the
+        survival function returned by an estimator's
+        ``predict_survival_function`` method.
 
     times : array-like, shape = (n_times,)
         The time points for which to estimate the Brier score.
@@ -766,7 +759,7 @@ def _estimator_has(attr):
 class _ScoreOverrideMixin:
     def __init__(self, estimator, predict_func, score_func, score_index, greater_is_better):
         if not hasattr(estimator, predict_func):
-            raise AttributeError("{!r} object has no attribute {!r}".format(estimator, predict_func))
+            raise AttributeError(f"{estimator!r} object has no attribute {predict_func!r}")
 
         self.estimator = estimator
         self._predict_func = predict_func
@@ -817,7 +810,7 @@ class _ScoreOverrideMixin:
             score = score[self._score_index]
         return self._sign * score
 
-    @available_if(_estimator_has('predict'))
+    @available_if(_estimator_has("predict"))
     def predict(self, X):
         """Call predict on the estimator.
 
@@ -832,7 +825,7 @@ class _ScoreOverrideMixin:
         check_is_fitted(self, "estimator_")
         return self.estimator_.predict(X)
 
-    @available_if(_estimator_has('predict_cumulative_hazard_function'))
+    @available_if(_estimator_has("predict_cumulative_hazard_function"))
     def predict_cumulative_hazard_function(self, X):
         """Call predict_cumulative_hazard_function on the estimator.
 
@@ -847,7 +840,7 @@ class _ScoreOverrideMixin:
         check_is_fitted(self, "estimator_")
         return self.estimator_.predict_cumulative_hazard_function(X)
 
-    @available_if(_estimator_has('predict_survival_function'))
+    @available_if(_estimator_has("predict_survival_function"))
     def predict_survival_function(self, X):
         """Call predict_survival_function on the estimator.
 
