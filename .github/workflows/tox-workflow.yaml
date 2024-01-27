@@ -7,24 +7,28 @@ jobs:
     name: Linting and Docs
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Install packages
+        run: |
+          sudo apt-get install cmake libenchant-2-dev tox
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew install pandoc
       - name: Run Tox
-        uses: fedora-python/tox-github-action@v35.1
-        with:
-          tox_env: py39-${{ matrix.tox_env }}
-          dnf_install: pandoc cmake make
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          tox run -e ${{ matrix.tox_env }}
       - name: Archive documentation
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: documentation
           path: doc/_build/html
         if: ${{ matrix.tox_env == 'docs' }}
       - name: Print debug information
-        run: cat .tox/py39-${{ matrix.tox_env }}/log/*.log
+        run: cat .tox/${{ matrix.tox_env }}/log/*.log
         if: ${{ failure() }}
     strategy:
       fail-fast: false
       matrix:
-        tox_env: [flake8, isort, docs]
+        tox_env: [lint, docs]

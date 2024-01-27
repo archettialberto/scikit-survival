@@ -95,11 +95,11 @@ class StepFunction:
         x = np.atleast_1d(x)
         # if not np.isfinite(x).all():
         #     raise ValueError("x must be finite")
-        # if np.min(x) < self._domain[0] or np.max(x) > self.domain[1]:
-        #     raise ValueError(f"x must be within [{self.domain[0]:f}; {self.domain[1]:f}]")
+        if np.min(x) < self._domain[0] or np.max(x) > self.domain[1]:
+            raise ValueError(f"x must be within [{self.domain[0]:f}; {self.domain[1]:f}]")
 
         # x is within the domain, but we need to account for self.domain[0] <= x < self.x[0]
-        x = np.clip(x, a_min=max(self.x[0], self._domain[0]), a_max=None)
+        x = np.clip(x, a_min=self.x[0], a_max=None)
 
         i = np.searchsorted(self.x, x, side="left")
         not_exact = self.x[i] != x
